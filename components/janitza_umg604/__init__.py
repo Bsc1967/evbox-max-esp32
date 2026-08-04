@@ -7,7 +7,6 @@ CODEOWNERS = ["@Bsc1967"]
 AUTO_LOAD = ["sensor", "text_sensor"]
 
 CONF_UNIT_ID = "unit_id"
-CONF_POLL_INTERVAL = "poll_interval"
 CONF_REGISTERS = "registers"
 CONF_L1_CURRENT = "l1_current"
 CONF_L2_CURRENT = "l2_current"
@@ -19,9 +18,12 @@ CONF_TOTAL_POWER = "total_power"
 CONF_IMPORT_POWER = "import_power"
 CONF_EXPORT_POWER = "export_power"
 CONF_COMMUNICATION_STATUS = "communication_status"
+CONF_EVBOX_MAX_ID = "evbox_max_id"
 
 janitza_ns = cg.esphome_ns.namespace("janitza_umg604")
 JanitzaUmg604Component = janitza_ns.class_("JanitzaUmg604Component", cg.PollingComponent)
+evbox_max_ns = cg.esphome_ns.namespace("evbox_max")
+EvboxMaxComponent = evbox_max_ns.class_("EvboxMaxComponent")
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -29,7 +31,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_IP_ADDRESS): cv.ipv4address,
         cv.Optional(CONF_PORT, default=502): cv.port,
         cv.Optional(CONF_UNIT_ID, default=1): cv.int_range(min=1, max=247),
-        cv.Optional(CONF_POLL_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_EVBOX_MAX_ID): cv.use_id(EvboxMaxComponent),
         cv.Optional(CONF_REGISTERS, default={}): cv.Schema(
             {
                 cv.Optional(CONF_L1_CURRENT, default=1325): cv.positive_int,
@@ -99,7 +101,7 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
     }
-).extend(cv.polling_component_schema("5s"))
+).extend(cv.polling_component_schema("1s"))
 
 
 async def to_code(config):
@@ -109,7 +111,9 @@ async def to_code(config):
     cg.add(var.set_host(str(config[CONF_IP_ADDRESS])))
     cg.add(var.set_port(config[CONF_PORT]))
     cg.add(var.set_unit_id(config[CONF_UNIT_ID]))
-    cg.add(var.set_poll_interval_ms(config[CONF_POLL_INTERVAL]))
+    if CONF_EVBOX_MAX_ID in config:
+        parent = await cg.get_variable(config[CONF_EVBOX_MAX_ID])
+        cg.add(var.set_evbox_parent(parent))
 
     registers = config[CONF_REGISTERS]
     cg.add(var.set_register_l1_current(registers[CONF_L1_CURRENT]))

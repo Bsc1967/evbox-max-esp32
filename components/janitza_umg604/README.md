@@ -11,6 +11,10 @@ ESPHome external component for polling a Janitza UMG604 Pro over Modbus TCP.
 - Total power sensor
 - Import and export power sensors
 - Communication status text sensor
+- 500 ms blocking warning threshold, because Modbus TCP polling can normally
+  take longer than ESPHome's default 30 ms component-loop warning.
+- Single-request live polling for the proven UMG604 live register block, so
+  overload detection is not delayed by multiple TCP round-trips.
 
 ## Register Map
 
@@ -25,6 +29,10 @@ Import/export power sensors are derived from signed total active power:
 
 - positive total power -> import
 - negative total power -> export
+
+For overload response, set `evbox_max_id` so this component pushes import/export
+values directly into the EVBox controller. The EVBox component immediately sends
+a lower current setpoint when the calculated current drops.
 
 The implementation currently expects 32-bit IEEE-754 float values spanning two
 holding registers in big-endian Modbus register/byte order. If values are

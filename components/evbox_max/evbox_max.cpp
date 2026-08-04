@@ -76,6 +76,14 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, bool onli
   this->inputs_.grid_import_w = import_w;
   this->inputs_.grid_export_w = export_w;
   this->inputs_.janitza_online = online;
+
+  const float next_current = this->controller_.calculate_current(this->inputs_);
+  if (next_current < this->active_current_) {
+    // Overload response path: do not wait for the next heartbeat tick when the
+    // meter says current must go down. A lower setpoint is sent immediately.
+    this->send_current_setpoint_(next_current);
+    this->last_heartbeat_ms_ = millis();
+  }
 }
 
 void EvboxMaxComponent::start_session() {

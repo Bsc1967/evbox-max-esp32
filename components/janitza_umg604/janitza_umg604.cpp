@@ -1,4 +1,6 @@
 #include "janitza_umg604.h"
+#include "../evbox_max/evbox_max.h"
+#include <algorithm>
 #include <cstring>
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -15,42 +17,81 @@ void JanitzaUmg604Component::setup() {
 }
 
 void JanitzaUmg604Component::update() {
-  float value = 0.0f;
-  bool ok = true;
+  const bool ok = this->read_live_registers_();
+  this->online_ = ok;
+  if (this->evbox_parent_ != nullptr) {
+    this->evbox_parent_->update_janitza(this->import_power_w_, this->export_power_w_, ok);
+  }
+  this->publish_status_();
+}
 
-  // Polling is intentionally sequential. One failed register marks the whole
-  // meter update offline, which lets EVBox fail-safe logic react consistently.
-  ok &= this->read_float_register_(this->reg_l1_current_, &value);
-  if (ok && this->l1_current_sensor_ != nullptr) this->l1_current_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_l2_current_, &value);
-  if (ok && this->l2_current_sensor_ != nullptr) this->l2_current_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_l3_current_, &value);
-  if (ok && this->l3_current_sensor_ != nullptr) this->l3_current_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_l1_voltage_, &value);
-  if (ok && this->l1_voltage_sensor_ != nullptr) this->l1_voltage_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_l2_voltage_, &value);
-  if (ok && this->l2_voltage_sensor_ != nullptr) this->l2_voltage_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_l3_voltage_, &value);
-  if (ok && this->l3_voltage_sensor_ != nullptr) this->l3_voltage_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_total_power_, &value);
-  if (ok) {
-    if (this->total_power_sensor_ != nullptr) this->total_power_sensor_->publish_state(value);
-    // The working Janitza dashboard reads signed active_power_total at 1369.
-    // Split that signed value into import/export helper sensors.
-    this->import_power_w_ = value > 0.0f ? value : 0.0f;
-    this->export_power_w_ = value < 0.0f ? -value : 0.0f;
-    if (this->import_power_sensor_ != nullptr) this->import_power_sensor_->publish_state(this->import_power_w_);
-    if (this->export_power_sensor_ != nullptr) this->export_power_sensor_->publish_state(this->export_power_w_);
+bool JanitzaUmg604Component::read_live_registers_() {
+  float value = 0.0f;
+
+  const uint16_t start = std::min({
+    this->reg_l1_voltage_, this->reg_l2_voltage_, this->reg_l3_voltage_,
+    this->reg_l1_current_, this->reg_l2_current_, this->reg_l3_current_,
+    this->reg_total_power_,
+  });
+  const uint16_t end = std::max({
+    this->reg_l1_voltage_, this->reg_l2_voltage_, this->reg_l3_voltage_,
+    this->reg_l1_current_, this->reg_l2_current_, this->reg_l3_current_,
+    this->reg_total_power_,
+  });
+  const uint16_t words = end - start + 2;
+
+  // Fast path: the proven UMG604 live registers are close together
+  // (1317..1369). One Modbus read gives all values, cutting normal response
+  // time from several TCP round-trips to one.
+  std::vector<uint16_t> registers;
+  if (words <= 124 && this->read_holding_registers_(start, words, &registers)) {
+    if (this->decode_float_(registers, start, this->reg_l1_current_, &value) && this->l1_current_sensor_ != nullptr)
+      this->l1_current_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l2_current_, &value) && this->l2_current_sensor_ != nullptr)
+      this->l2_current_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l3_current_, &value) && this->l3_current_sensor_ != nullptr)
+      this->l3_current_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l1_voltage_, &value) && this->l1_voltage_sensor_ != nullptr)
+      this->l1_voltage_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l2_voltage_, &value) && this->l2_voltage_sensor_ != nullptr)
+      this->l2_voltage_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l3_voltage_, &value) && this->l3_voltage_sensor_ != nullptr)
+      this->l3_voltage_sensor_->publish_state(value);
+    if (!this->decode_float_(registers, start, this->reg_total_power_, &value)) {
+      return false;
+    }
+  } else {
+    // Fallback for unusual custom register maps that are too far apart for a
+    // compact read. This keeps configurability, but the normal path should be
+    // the single-request read above.
+    if (!this->read_float_register_(this->reg_l1_current_, &value)) return false;
+    if (this->l1_current_sensor_ != nullptr) this->l1_current_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_l2_current_, &value)) return false;
+    if (this->l2_current_sensor_ != nullptr) this->l2_current_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_l3_current_, &value)) return false;
+    if (this->l3_current_sensor_ != nullptr) this->l3_current_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_l1_voltage_, &value)) return false;
+    if (this->l1_voltage_sensor_ != nullptr) this->l1_voltage_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_l2_voltage_, &value)) return false;
+    if (this->l2_voltage_sensor_ != nullptr) this->l2_voltage_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_l3_voltage_, &value)) return false;
+    if (this->l3_voltage_sensor_ != nullptr) this->l3_voltage_sensor_->publish_state(value);
+    if (!this->read_float_register_(this->reg_total_power_, &value)) return false;
   }
 
-  this->online_ = ok;
-  this->publish_status_();
+  if (this->total_power_sensor_ != nullptr) this->total_power_sensor_->publish_state(value);
+  this->import_power_w_ = value > 0.0f ? value : 0.0f;
+  this->export_power_w_ = value < 0.0f ? -value : 0.0f;
+  if (this->import_power_sensor_ != nullptr) this->import_power_sensor_->publish_state(this->import_power_w_);
+  if (this->export_power_sensor_ != nullptr) this->export_power_sensor_->publish_state(this->export_power_w_);
+  return true;
 }
 
 void JanitzaUmg604Component::dump_config() {
   ESP_LOGCONFIG(TAG, "Janitza UMG604 Modbus TCP");
   ESP_LOGCONFIG(TAG, "  Host: %s:%u", this->host_.c_str(), this->port_);
   ESP_LOGCONFIG(TAG, "  Unit ID: %u", this->unit_id_);
+  ESP_LOGCONFIG(TAG, "  Blocking warning threshold: 500 ms");
 }
 
 bool JanitzaUmg604Component::read_float_register_(uint16_t address, float *value) {
@@ -77,6 +118,37 @@ bool JanitzaUmg604Component::read_float_register_(uint16_t address, float *value
                        (static_cast<uint32_t>(response[10]) << 16) |
                        (static_cast<uint32_t>(response[11]) << 8) |
                        static_cast<uint32_t>(response[12]);
+  std::memcpy(value, &raw, sizeof(float));
+  return true;
+}
+
+bool JanitzaUmg604Component::read_holding_registers_(uint16_t address, uint16_t words, std::vector<uint16_t> *registers) {
+  std::vector<uint8_t> response(9 + words * 2);
+  if (!this->modbus_request_(address, words, response.data(), response.size())) {
+    return false;
+  }
+
+  if (response[7] != 0x03 || response[8] != words * 2) {
+    ESP_LOGW(TAG, "Unexpected Modbus response for registers %u..%u", address, address + words - 1);
+    return false;
+  }
+
+  registers->clear();
+  registers->reserve(words);
+  for (uint16_t i = 0; i < words; i++) {
+    const size_t offset = 9 + i * 2;
+    registers->push_back(static_cast<uint16_t>((response[offset] << 8) | response[offset + 1]));
+  }
+  return true;
+}
+
+bool JanitzaUmg604Component::decode_float_(const std::vector<uint16_t> &registers, uint16_t start_address, uint16_t address, float *value) const {
+  const uint16_t index = address - start_address;
+  if (index + 1 >= registers.size()) {
+    return false;
+  }
+
+  const uint32_t raw = (static_cast<uint32_t>(registers[index]) << 16) | registers[index + 1];
   std::memcpy(value, &raw, sizeof(float));
   return true;
 }
@@ -126,9 +198,16 @@ bool JanitzaUmg604Component::modbus_request_(uint16_t address, uint16_t words, u
     return false;
   }
 
-  const int received = lwip_recv(fd, response, response_len, 0);
+  size_t received_total = 0;
+  while (received_total < response_len) {
+    const int received = lwip_recv(fd, response + received_total, response_len - received_total, 0);
+    if (received <= 0) {
+      break;
+    }
+    received_total += static_cast<size_t>(received);
+  }
   lwip_close(fd);
-  return received >= 9;
+  return received_total == response_len;
 }
 
 uint16_t JanitzaUmg604Component::transaction_id_() {

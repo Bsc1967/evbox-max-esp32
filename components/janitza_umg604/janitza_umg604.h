@@ -1,11 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 
 namespace esphome {
+namespace evbox_max {
+class EvboxMaxComponent;
+}
 namespace janitza_umg604 {
 
 class JanitzaUmg604Component : public PollingComponent {
@@ -13,6 +17,7 @@ class JanitzaUmg604Component : public PollingComponent {
   void setup() override;
   void update() override;
   void dump_config() override;
+  uint16_t get_warn_if_blocking_over() const override { return 500; }
 
   void set_host(const std::string &host) { this->host_ = host; }
   void set_port(uint16_t port) { this->port_ = port; }
@@ -39,6 +44,7 @@ class JanitzaUmg604Component : public PollingComponent {
   void set_import_power_sensor(sensor::Sensor *sensor) { this->import_power_sensor_ = sensor; }
   void set_export_power_sensor(sensor::Sensor *sensor) { this->export_power_sensor_ = sensor; }
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
+  void set_evbox_parent(evbox_max::EvboxMaxComponent *parent) { this->evbox_parent_ = parent; }
 
   bool online() const { return this->online_; }
   float import_power_w() const { return this->import_power_w_; }
@@ -46,6 +52,9 @@ class JanitzaUmg604Component : public PollingComponent {
 
  protected:
   bool read_float_register_(uint16_t address, float *value);
+  bool read_live_registers_();
+  bool read_holding_registers_(uint16_t address, uint16_t words, std::vector<uint16_t> *registers);
+  bool decode_float_(const std::vector<uint16_t> &registers, uint16_t start_address, uint16_t address, float *value) const;
   bool modbus_request_(uint16_t address, uint16_t words, uint8_t *response, size_t response_len);
   uint16_t transaction_id_();
   void publish_status_();
@@ -79,6 +88,7 @@ class JanitzaUmg604Component : public PollingComponent {
   sensor::Sensor *import_power_sensor_{nullptr};
   sensor::Sensor *export_power_sensor_{nullptr};
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
+  evbox_max::EvboxMaxComponent *evbox_parent_{nullptr};
 };
 
 }  // namespace janitza_umg604

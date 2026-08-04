@@ -163,6 +163,17 @@ negatief is export.
 Als één registerpoll faalt, wordt de meter voor die cyclus offline gezet. De
 EVBox-regelalgoritmes kunnen dan direct naar failsafe.
 
+De ESPHome waarschuwing voor lang blokkerende componenten staat voor deze
+component op 500 ms. Modbus TCP over netwerk mag dus normaal rond 100-300 ms
+duren zonder dat dit als probleem wordt gelogd.
+
+Voor snelle terugregeling leest de ESP de live Janitza-registers in één
+Modbus-request in plaats van losse requests per sensor. Met `evbox_max_id`
+gekoppeld aan de EVBox-component worden import/exportwaarden direct doorgegeven.
+Als de berekende laadstroom lager wordt dan de huidige setpoint, stuurt
+`evbox_max` meteen een lagere current setpoint en wacht hij niet op de volgende
+heartbeat.
+
 ## Regelalgoritmes
 
 De laadstroom wordt bepaald in `ChargeController`, niet in het protocol.

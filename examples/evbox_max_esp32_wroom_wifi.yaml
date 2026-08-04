@@ -78,10 +78,11 @@ evbox_max:
 
 janitza_umg604:
   id: janitza
+  evbox_max_id: evbox
   ip_address: ${janitza_ip}
   port: 502
   unit_id: 1
-  update_interval: 5s
+  update_interval: 1s
   l1_current:
     name: Janitza L1 Current
   l2_current:
