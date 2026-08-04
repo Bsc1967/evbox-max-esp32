@@ -1,0 +1,156 @@
+substitutions:
+  device_name: evbox-max-controller
+  friendly_name: EVBox MAX Controller
+  janitza_ip: 192.168.1.30
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-poe
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: local
+      path: ..
+    components:
+      - evbox_max
+      - janitza_umg604
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  platform: esphome
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO17_OUT
+  phy_addr: 0
+  power_pin: GPIO12
+
+uart:
+  id: evbox_rs485_uart
+  tx_pin: GPIO4
+  rx_pin: GPIO36
+  baud_rate: 38400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+evbox_max:
+  id: evbox
+  uart_id: evbox_rs485_uart
+  rs485_de_pin: GPIO5
+  mode: MANUAL
+  manual_current: 6
+  max_current: 16
+  failsafe_mode: LIMIT_6A
+  failsafe_current: 6
+  heartbeat_interval: 5s
+  watchdog_timeout: 30s
+  status:
+    name: EV Status
+  state:
+    name: EV State
+  communication_status:
+    name: EVBox Communication Status
+  ev_current:
+    name: EV Current
+  session_energy:
+    name: Session Energy
+  meter_value:
+    name: Meter Value
+  temperature:
+    name: EVBox Temperature
+
+janitza_umg604:
+  id: janitza
+  ip_address: ${janitza_ip}
+  port: 502
+  unit_id: 1
+  update_interval: 5s
+  registers:
+    l1_current: 19000
+    l2_current: 19002
+    l3_current: 19004
+    l1_voltage: 19006
+    l2_voltage: 19008
+    l3_voltage: 19010
+    total_power: 19012
+    import_power: 19014
+    export_power: 19016
+  l1_current:
+    name: Janitza L1 Current
+  l2_current:
+    name: Janitza L2 Current
+  l3_current:
+    name: Janitza L3 Current
+  l1_voltage:
+    name: Janitza L1 Voltage
+  l2_voltage:
+    name: Janitza L2 Voltage
+  l3_voltage:
+    name: Janitza L3 Voltage
+  total_power:
+    name: Janitza Total Power
+  import_power:
+    name: Janitza Import Power
+  export_power:
+    name: Janitza Export Power
+  communication_status:
+    name: Janitza Communication Status
+
+number:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MANUAL_CURRENT
+    name: Manual Current
+    min_value: 0
+    max_value: 32
+    step: 1
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MAX_CURRENT
+    name: Max Current
+    min_value: 0
+    max_value: 32
+    step: 1
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_CURRENT
+    name: Failsafe Current
+    min_value: 0
+    max_value: 6
+    step: 1
+
+select:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MODE
+    name: Charge Mode
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_MODE
+    name: Failsafe Mode
+
+switch:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: START
+    name: Start Charging
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: STOP
+    name: Stop Charging
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: ENABLE_PV_MODE
+    name: Enable PV Mode
