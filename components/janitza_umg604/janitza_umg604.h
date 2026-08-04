@@ -17,7 +17,6 @@ class JanitzaUmg604Component : public PollingComponent {
   void setup() override;
   void update() override;
   void dump_config() override;
-  uint16_t get_warn_if_blocking_over() const override { return 500; }
 
   void set_host(const std::string &host) { this->host_ = host; }
   void set_port(uint16_t port) { this->port_ = port; }

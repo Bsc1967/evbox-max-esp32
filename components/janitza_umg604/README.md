@@ -11,8 +11,6 @@ ESPHome external component for polling a Janitza UMG604 Pro over Modbus TCP.
 - Total power sensor
 - Import and export power sensors
 - Communication status text sensor
-- 500 ms blocking warning threshold, because Modbus TCP polling can normally
-  take longer than ESPHome's default 30 ms component-loop warning.
 - Single-request live polling for the proven UMG604 live register block, so
   overload detection is not delayed by multiple TCP round-trips.
 

@@ -91,7 +91,6 @@ void JanitzaUmg604Component::dump_config() {
   ESP_LOGCONFIG(TAG, "Janitza UMG604 Modbus TCP");
   ESP_LOGCONFIG(TAG, "  Host: %s:%u", this->host_.c_str(), this->port_);
   ESP_LOGCONFIG(TAG, "  Unit ID: %u", this->unit_id_);
-  ESP_LOGCONFIG(TAG, "  Blocking warning threshold: 500 ms");
 }
 
 bool JanitzaUmg604Component::read_float_register_(uint16_t address, float *value) {
