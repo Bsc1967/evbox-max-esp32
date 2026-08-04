@@ -1,0 +1,133 @@
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome import pins
+from esphome.components import uart, sensor, text_sensor
+from esphome.const import (
+    CONF_ID,
+    CONF_MODE,
+    CONF_TEMPERATURE,
+    CONF_MAX_CURRENT,
+)
+
+CODEOWNERS = ["@Bsc1967"]
+DEPENDENCIES = ["uart"]
+AUTO_LOAD = ["sensor", "text_sensor", "number", "select", "switch"]
+
+CONF_FAILSAFE_CURRENT = "failsafe_current"
+CONF_FAILSAFE_MODE = "failsafe_mode"
+CONF_HEARTBEAT_INTERVAL = "heartbeat_interval"
+CONF_WATCHDOG_TIMEOUT = "watchdog_timeout"
+CONF_MANUAL_CURRENT = "manual_current"
+CONF_ENABLE_PV_MODE = "enable_pv_mode"
+CONF_STATUS = "status"
+CONF_STATE = "state"
+CONF_EV_CURRENT = "ev_current"
+CONF_SESSION_ENERGY = "session_energy"
+CONF_METER_VALUE = "meter_value"
+CONF_COMMUNICATION_STATUS = "communication_status"
+CONF_RS485_DE_PIN = "rs485_de_pin"
+
+evbox_max_ns = cg.esphome_ns.namespace("evbox_max")
+
+EvboxMaxComponent = evbox_max_ns.class_(
+    "EvboxMaxComponent",
+    cg.Component,
+    uart.UARTDevice,
+)
+
+ChargingMode = evbox_max_ns.enum("ChargingMode")
+CHARGING_MODES = {
+    "MANUAL": ChargingMode.CHARGING_MODE_MANUAL,
+    "LOAD_BALANCING": ChargingMode.CHARGING_MODE_LOAD_BALANCING,
+    "PV_SURPLUS": ChargingMode.CHARGING_MODE_PV_SURPLUS,
+    "DISABLED": ChargingMode.CHARGING_MODE_DISABLED,
+}
+
+FailsafeMode = evbox_max_ns.enum("FailsafeMode")
+FAILSAFE_MODES = {
+    "STOP": FailsafeMode.FAILSAFE_MODE_STOP,
+    "LIMIT_6A": FailsafeMode.FAILSAFE_MODE_LIMIT_6A,
+}
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(EvboxMaxComponent),
+        cv.Optional(CONF_MODE, default="MANUAL"): cv.enum(CHARGING_MODES, upper=True),
+        cv.Optional(CONF_MAX_CURRENT, default=16): cv.float_range(min=0, max=32),
+        cv.Optional(CONF_MANUAL_CURRENT, default=6): cv.float_range(min=0, max=32),
+        cv.Optional(CONF_FAILSAFE_CURRENT, default=6): cv.float_range(min=0, max=16),
+        cv.Optional(CONF_FAILSAFE_MODE, default="LIMIT_6A"): cv.enum(
+            FAILSAFE_MODES, upper=True
+        ),
+        cv.Optional(CONF_HEARTBEAT_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_WATCHDOG_TIMEOUT, default="30s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_RS485_DE_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_STATE): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_EV_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_SESSION_ENERGY): sensor.sensor_schema(
+            unit_of_measurement="kWh",
+            accuracy_decimals=3,
+            device_class="energy",
+            state_class="total_increasing",
+        ),
+        cv.Optional(CONF_METER_VALUE): sensor.sensor_schema(
+            unit_of_measurement="kWh",
+            accuracy_decimals=3,
+            device_class="energy",
+            state_class="total_increasing",
+        ),
+        cv.Optional(CONF_TEMPERATURE): sensor.sensor_schema(
+            unit_of_measurement="°C",
+            accuracy_decimals=1,
+            device_class="temperature",
+            state_class="measurement",
+        ),
+    }
+).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
+
+
+async def to_code(config):
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+    await uart.register_uart_device(var, config)
+
+    cg.add(var.set_mode(config[CONF_MODE]))
+    cg.add(var.set_max_current(config[CONF_MAX_CURRENT]))
+    cg.add(var.set_manual_current(config[CONF_MANUAL_CURRENT]))
+    cg.add(var.set_failsafe_current(config[CONF_FAILSAFE_CURRENT]))
+    cg.add(var.set_failsafe_mode(config[CONF_FAILSAFE_MODE]))
+    cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
+    cg.add(var.set_watchdog_timeout(config[CONF_WATCHDOG_TIMEOUT]))
+
+    if CONF_RS485_DE_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_RS485_DE_PIN])
+        cg.add(var.set_rs485_de_pin(pin))
+
+    if CONF_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_STATUS])
+        cg.add(var.set_status_text_sensor(sens))
+    if CONF_STATE in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_STATE])
+        cg.add(var.set_state_text_sensor(sens))
+    if CONF_COMMUNICATION_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_COMMUNICATION_STATUS])
+        cg.add(var.set_communication_text_sensor(sens))
+    if CONF_EV_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_EV_CURRENT])
+        cg.add(var.set_ev_current_sensor(sens))
+    if CONF_SESSION_ENERGY in config:
+        sens = await sensor.new_sensor(config[CONF_SESSION_ENERGY])
+        cg.add(var.set_session_energy_sensor(sens))
+    if CONF_METER_VALUE in config:
+        sens = await sensor.new_sensor(config[CONF_METER_VALUE])
+        cg.add(var.set_meter_value_sensor(sens))
+    if CONF_TEMPERATURE in config:
+        sens = await sensor.new_sensor(config[CONF_TEMPERATURE])
+        cg.add(var.set_temperature_sensor(sens))
