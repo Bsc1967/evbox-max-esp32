@@ -32,15 +32,15 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_POLL_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_REGISTERS, default={}): cv.Schema(
             {
-                cv.Optional(CONF_L1_CURRENT, default=19000): cv.positive_int,
-                cv.Optional(CONF_L2_CURRENT, default=19002): cv.positive_int,
-                cv.Optional(CONF_L3_CURRENT, default=19004): cv.positive_int,
-                cv.Optional(CONF_L1_VOLTAGE, default=19006): cv.positive_int,
-                cv.Optional(CONF_L2_VOLTAGE, default=19008): cv.positive_int,
-                cv.Optional(CONF_L3_VOLTAGE, default=19010): cv.positive_int,
-                cv.Optional(CONF_TOTAL_POWER, default=19012): cv.positive_int,
-                cv.Optional(CONF_IMPORT_POWER, default=19014): cv.positive_int,
-                cv.Optional(CONF_EXPORT_POWER, default=19016): cv.positive_int,
+                cv.Optional(CONF_L1_CURRENT, default=1325): cv.positive_int,
+                cv.Optional(CONF_L2_CURRENT, default=1327): cv.positive_int,
+                cv.Optional(CONF_L3_CURRENT, default=1329): cv.positive_int,
+                cv.Optional(CONF_L1_VOLTAGE, default=1317): cv.positive_int,
+                cv.Optional(CONF_L2_VOLTAGE, default=1319): cv.positive_int,
+                cv.Optional(CONF_L3_VOLTAGE, default=1321): cv.positive_int,
+                cv.Optional(CONF_TOTAL_POWER, default=1369): cv.positive_int,
+                cv.Optional(CONF_IMPORT_POWER, default=1369): cv.positive_int,
+                cv.Optional(CONF_EXPORT_POWER, default=1369): cv.positive_int,
             }
         ),
         cv.Optional(CONF_L1_CURRENT): sensor.sensor_schema(

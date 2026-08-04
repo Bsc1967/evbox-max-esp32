@@ -5,6 +5,8 @@ namespace esphome {
 namespace evbox_max {
 
 float ChargeController::calculate_current(const ControlInputs &inputs) const {
+  // Janitza is required for dynamic modes. If the meter disappears, fall back
+  // to the configured safe behavior instead of guessing available capacity.
   if (!inputs.janitza_online &&
       (this->mode_ == CHARGING_MODE_LOAD_BALANCING || this->mode_ == CHARGING_MODE_PV_SURPLUS)) {
     return this->failsafe_();
@@ -29,6 +31,8 @@ float ChargeController::manual_(const ControlInputs &inputs) const {
 
 float ChargeController::load_balancing_(const ControlInputs &inputs) const {
   // Conservative first implementation: reduce 1 A per 230 W grid import.
+  // This is deliberately simple until site fuse limits and phase mapping are
+  // known. The protocol layer does not need to change when this gets smarter.
   const float reduction = inputs.grid_import_w > 0.0f ? inputs.grid_import_w / 230.0f : 0.0f;
   return clamp(inputs.max_current - reduction, 0.0f, inputs.max_current);
 }
@@ -38,6 +42,7 @@ float ChargeController::pv_surplus_(const ControlInputs &inputs) const {
     return 0.0f;
   }
   // Approximate three-phase current from surplus power.
+  // Real PV mode should later include hysteresis and minimum-on/off timers.
   const float surplus_a = inputs.grid_export_w / (230.0f * 3.0f);
   return clamp(surplus_a, 0.0f, inputs.max_current);
 }

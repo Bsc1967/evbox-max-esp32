@@ -78,15 +78,15 @@ janitza_umg604:
   unit_id: 1
   update_interval: 5s
   registers:
-    l1_current: 19000
-    l2_current: 19002
-    l3_current: 19004
-    l1_voltage: 19006
-    l2_voltage: 19008
-    l3_voltage: 19010
-    total_power: 19012
-    import_power: 19014
-    export_power: 19016
+    l1_current: 1325
+    l2_current: 1327
+    l3_current: 1329
+    l1_voltage: 1317
+    l2_voltage: 1319
+    l3_voltage: 1321
+    total_power: 1369
+    import_power: 1369
+    export_power: 1369
   l1_current:
     name: Janitza L1 Current
   l2_current:

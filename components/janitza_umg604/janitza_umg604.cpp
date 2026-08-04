@@ -18,6 +18,8 @@ void JanitzaUmg604Component::update() {
   float value = 0.0f;
   bool ok = true;
 
+  // Polling is intentionally sequential. One failed register marks the whole
+  // meter update offline, which lets EVBox fail-safe logic react consistently.
   ok &= this->read_float_register_(this->reg_l1_current_, &value);
   if (ok && this->l1_current_sensor_ != nullptr) this->l1_current_sensor_->publish_state(value);
   ok &= this->read_float_register_(this->reg_l2_current_, &value);
@@ -31,11 +33,15 @@ void JanitzaUmg604Component::update() {
   ok &= this->read_float_register_(this->reg_l3_voltage_, &value);
   if (ok && this->l3_voltage_sensor_ != nullptr) this->l3_voltage_sensor_->publish_state(value);
   ok &= this->read_float_register_(this->reg_total_power_, &value);
-  if (ok && this->total_power_sensor_ != nullptr) this->total_power_sensor_->publish_state(value);
-  ok &= this->read_float_register_(this->reg_import_power_, &this->import_power_w_);
-  if (ok && this->import_power_sensor_ != nullptr) this->import_power_sensor_->publish_state(this->import_power_w_);
-  ok &= this->read_float_register_(this->reg_export_power_, &this->export_power_w_);
-  if (ok && this->export_power_sensor_ != nullptr) this->export_power_sensor_->publish_state(this->export_power_w_);
+  if (ok) {
+    if (this->total_power_sensor_ != nullptr) this->total_power_sensor_->publish_state(value);
+    // The working Janitza dashboard reads signed active_power_total at 1369.
+    // Split that signed value into import/export helper sensors.
+    this->import_power_w_ = value > 0.0f ? value : 0.0f;
+    this->export_power_w_ = value < 0.0f ? -value : 0.0f;
+    if (this->import_power_sensor_ != nullptr) this->import_power_sensor_->publish_state(this->import_power_w_);
+    if (this->export_power_sensor_ != nullptr) this->export_power_sensor_->publish_state(this->export_power_w_);
+  }
 
   this->online_ = ok;
   this->publish_status_();
@@ -53,17 +59,31 @@ bool JanitzaUmg604Component::read_float_register_(uint16_t address, float *value
     return false;
   }
 
+  // Function 0x03 returns holding registers. For a 32-bit float we expect four
+  // data bytes after the MBAP header, unit id, function code, and byte count.
   if (response[7] != 0x03 || response[8] != 4) {
     ESP_LOGW(TAG, "Unexpected Modbus response for register %u", address);
     return false;
   }
 
-  uint8_t ordered[4] = {response[9], response[10], response[11], response[12]};
-  std::memcpy(value, ordered, sizeof(float));
+  // Janitza/Modbus sends register bytes in network order. ESP32 stores floats
+  // little-endian, so first build the 32-bit IEEE-754 bit pattern as an integer
+  // value and then copy that bit pattern into the float.
+  //
+  // Example: 230.0 V is 0x43660000 on the wire as 43 66 00 00. Building the
+  // integer 0x43660000 and memcpy'ing the integer value yields the correct
+  // float on the ESP32.
+  const uint32_t raw = (static_cast<uint32_t>(response[9]) << 24) |
+                       (static_cast<uint32_t>(response[10]) << 16) |
+                       (static_cast<uint32_t>(response[11]) << 8) |
+                       static_cast<uint32_t>(response[12]);
+  std::memcpy(value, &raw, sizeof(float));
   return true;
 }
 
 bool JanitzaUmg604Component::modbus_request_(uint16_t address, uint16_t words, uint8_t *response, size_t response_len) {
+  // ESPHome does not need a full Modbus hub here: the UMG604 is read over a
+  // plain TCP socket using one request/response per register group.
   int fd = lwip_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
   if (fd < 0) {
     ESP_LOGW(TAG, "Unable to create socket");
@@ -86,6 +106,9 @@ bool JanitzaUmg604Component::modbus_request_(uint16_t address, uint16_t words, u
     return false;
   }
 
+  // MBAP header + Modbus PDU:
+  // transaction, protocol=0, length=6, unit id, function=0x03,
+  // start register, register count.
   const uint16_t tx = this->transaction_id_();
   uint8_t request[12] = {
     static_cast<uint8_t>((tx >> 8) & 0xFF), static_cast<uint8_t>(tx & 0xFF),

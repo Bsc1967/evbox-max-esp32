@@ -56,15 +56,15 @@ class JanitzaUmg604Component : public PollingComponent {
   bool online_{false};
   uint16_t next_transaction_id_{1};
 
-  uint16_t reg_l1_current_{19000};
-  uint16_t reg_l2_current_{19002};
-  uint16_t reg_l3_current_{19004};
-  uint16_t reg_l1_voltage_{19006};
-  uint16_t reg_l2_voltage_{19008};
-  uint16_t reg_l3_voltage_{19010};
-  uint16_t reg_total_power_{19012};
-  uint16_t reg_import_power_{19014};
-  uint16_t reg_export_power_{19016};
+  uint16_t reg_l1_current_{1325};
+  uint16_t reg_l2_current_{1327};
+  uint16_t reg_l3_current_{1329};
+  uint16_t reg_l1_voltage_{1317};
+  uint16_t reg_l2_voltage_{1319};
+  uint16_t reg_l3_voltage_{1321};
+  uint16_t reg_total_power_{1369};
+  uint16_t reg_import_power_{1369};
+  uint16_t reg_export_power_{1369};
 
   float import_power_w_{0.0f};
   float export_power_w_{0.0f};

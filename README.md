@@ -60,6 +60,11 @@ starting point until it has been validated on a bench setup:
 - Confirm fail-safe behavior on Janitza and EVBox communication loss.
 - Only then allow non-zero pilot/current control.
 
+## Documentation
+
+- `docs/architecture_nl.md`: Dutch explanation of the communication layers,
+  EVBox state machine, Janitza polling, control modes, and fail-safe behavior.
+
 ## License
 
 MIT. See `LICENSE`.
