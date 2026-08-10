@@ -20,8 +20,16 @@ enum FailsafeMode : uint8_t {
 struct ControlInputs {
   float manual_current{6.0f};
   float max_current{16.0f};
+  float charger_breaker_current{16.0f};
+  float main_fuse_current{25.0f};
+  float ev_current{0.0f};
+  float l1_current{0.0f};
+  float l2_current{0.0f};
+  float l3_current{0.0f};
   float grid_import_w{0.0f};
   float grid_export_w{0.0f};
+  uint8_t charge_phases{3};
+  uint8_t active_phase_mask{0x07};
   bool janitza_online{false};
   bool pv_enabled{false};
 };
@@ -38,6 +46,7 @@ class ChargeController {
   float manual_(const ControlInputs &inputs) const;
   float load_balancing_(const ControlInputs &inputs) const;
   float pv_surplus_(const ControlInputs &inputs) const;
+  float apply_safety_limits_(float requested_current, const ControlInputs &inputs) const;
   float failsafe_() const;
 
   ChargingMode mode_{CHARGING_MODE_MANUAL};
