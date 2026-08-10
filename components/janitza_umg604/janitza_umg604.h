@@ -42,8 +42,10 @@ class JanitzaUmg604Component : public PollingComponent {
   void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
   void set_import_power_sensor(sensor::Sensor *sensor) { this->import_power_sensor_ = sensor; }
   void set_export_power_sensor(sensor::Sensor *sensor) { this->export_power_sensor_ = sensor; }
+  void set_detected_charge_phases_sensor(sensor::Sensor *sensor) { this->detected_charge_phases_sensor_ = sensor; }
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
   void set_evbox_parent(evbox_max::EvboxMaxComponent *parent) { this->evbox_parent_ = parent; }
+  void set_phase_detect_current(float current) { this->phase_detect_current_ = current; }
 
   bool online() const { return this->online_; }
   float import_power_w() const { return this->import_power_w_; }
@@ -56,6 +58,8 @@ class JanitzaUmg604Component : public PollingComponent {
   bool decode_float_(const std::vector<uint16_t> &registers, uint16_t start_address, uint16_t address, float *value) const;
   bool modbus_request_(uint16_t address, uint16_t words, uint8_t *response, size_t response_len);
   uint16_t transaction_id_();
+  uint8_t detect_charge_phase_mask_() const;
+  uint8_t count_charge_phases_(uint8_t phase_mask) const;
   void publish_status_();
 
   std::string host_{};
@@ -76,6 +80,12 @@ class JanitzaUmg604Component : public PollingComponent {
 
   float import_power_w_{0.0f};
   float export_power_w_{0.0f};
+  float l1_current_a_{0.0f};
+  float l2_current_a_{0.0f};
+  float l3_current_a_{0.0f};
+  float phase_detect_current_{5.0f};
+  uint8_t detected_charge_phases_{3};
+  uint8_t detected_charge_phase_mask_{0x07};
 
   sensor::Sensor *l1_current_sensor_{nullptr};
   sensor::Sensor *l2_current_sensor_{nullptr};
@@ -86,6 +96,7 @@ class JanitzaUmg604Component : public PollingComponent {
   sensor::Sensor *total_power_sensor_{nullptr};
   sensor::Sensor *import_power_sensor_{nullptr};
   sensor::Sensor *export_power_sensor_{nullptr};
+  sensor::Sensor *detected_charge_phases_sensor_{nullptr};
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
   evbox_max::EvboxMaxComponent *evbox_parent_{nullptr};
 };
