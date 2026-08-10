@@ -70,11 +70,16 @@ void EvboxMaxComponent::set_failsafe_current(float current) {
   this->controller_.set_failsafe_current(current);
 }
 
-void EvboxMaxComponent::update_janitza(float import_w, float export_w, bool online) {
+void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
+                                      float l3_current, bool online) {
   // The Janitza component only provides measurements. Charging policy remains
   // in ChargeController so meter communication and control logic do not blend.
   this->inputs_.grid_import_w = import_w;
   this->inputs_.grid_export_w = export_w;
+  this->inputs_.l1_current = l1_current;
+  this->inputs_.l2_current = l2_current;
+  this->inputs_.l3_current = l3_current;
+  this->inputs_.ev_current = this->active_current_;
   this->inputs_.janitza_online = online;
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
