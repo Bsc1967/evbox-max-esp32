@@ -18,6 +18,12 @@ void EvboxCurrentNumber::control(float value) {
     case EVBOX_NUMBER_FAILSAFE_CURRENT:
       this->parent_->set_failsafe_current(value);
       break;
+    case EVBOX_NUMBER_CHARGER_BREAKER_CURRENT:
+      this->parent_->set_charger_breaker_current(value);
+      break;
+    case EVBOX_NUMBER_MAIN_FUSE_CURRENT:
+      this->parent_->set_main_fuse_current(value);
+      break;
   }
   this->publish_state(value);
 }
