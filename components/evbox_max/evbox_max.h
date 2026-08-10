@@ -36,8 +36,16 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_mode(ChargingMode mode);
   void set_failsafe_mode(FailsafeMode mode);
   void set_max_current(float current) { this->inputs_.max_current = current; }
+  void set_charger_breaker_current(float current) { this->inputs_.charger_breaker_current = current; }
+  void set_main_fuse_current(float current) { this->inputs_.main_fuse_current = current; }
   void set_manual_current(float current) { this->inputs_.manual_current = current; }
   void set_failsafe_current(float current);
+  void set_charge_phases(uint8_t phases) {
+    const uint8_t clamped = phases < 1 ? 1 : (phases > 3 ? 3 : phases);
+    this->inputs_.charge_phases = clamped;
+    this->inputs_.active_phase_mask = clamped == 1 ? 0x01 : (clamped == 2 ? 0x03 : 0x07);
+  }
+  void set_active_phase_mask(uint8_t mask) { this->inputs_.active_phase_mask = mask & 0x07; }
   void set_heartbeat_interval(uint32_t interval) { this->heartbeat_interval_ms_ = interval; }
   void set_watchdog_timeout(uint32_t timeout) { this->watchdog_timeout_ms_ = timeout; }
   void set_rs485_de_pin(GPIOPin *pin) { this->rs485_de_pin_ = pin; }
@@ -50,7 +58,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
 
-  void update_janitza(float import_w, float export_w, bool online);
+  void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current, bool online);
   void set_pv_enabled(bool enabled) { this->inputs_.pv_enabled = enabled; }
   void start_session();
   void stop_session();
