@@ -37,9 +37,6 @@ wifi:
 
 captive_portal:
 
-web_server:
-  port: 80
-
 # Waveshare ESP32-S3-Relay-6CH onboard RS485:
 # GPIO17 -> RS485 TX
 # GPIO18 -> RS485 RX
