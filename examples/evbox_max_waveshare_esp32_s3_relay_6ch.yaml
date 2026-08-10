@@ -1,0 +1,183 @@
+substitutions:
+  device_name: evloadbalance-waveshare
+  friendly_name: EV LoadBalance WaveShare
+  janitza_ip: 192.168.1.30
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+external_components:
+  - source: github://Bsc1967/evbox-max-esp32@main
+    components:
+      - evbox_max
+      - janitza_umg604
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Setup"
+    password: "evloadbalance"
+
+captive_portal:
+
+web_server:
+  port: 80
+
+# Waveshare ESP32-S3-Relay-6CH onboard RS485:
+# GPIO17 -> RS485 TX
+# GPIO18 -> RS485 RX
+uart:
+  id: evbox_rs485_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 38400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 512
+
+evbox_max:
+  id: evbox
+  uart_id: evbox_rs485_uart
+  mode: PV_SURPLUS
+  manual_current: 6
+  max_current: 16
+  failsafe_mode: LIMIT_6A
+  failsafe_current: 6
+  heartbeat_interval: 5s
+  watchdog_timeout: 30s
+  status:
+    name: EVBox Status
+  state:
+    name: EVBox State
+  communication_status:
+    name: EVBox Communication
+  ev_current:
+    name: EV Current
+  session_energy:
+    name: EV Session Energy
+  meter_value:
+    name: EV Meter Value
+  temperature:
+    name: EVBox Temperature
+
+janitza_umg604:
+  id: janitza
+  evbox_max_id: evbox
+  ip_address: ${janitza_ip}
+  port: 502
+  unit_id: 1
+  update_interval: 1s
+  l1_current:
+    name: Janitza L1 Current
+  l2_current:
+    name: Janitza L2 Current
+  l3_current:
+    name: Janitza L3 Current
+  l1_voltage:
+    name: Janitza L1 Voltage
+  l2_voltage:
+    name: Janitza L2 Voltage
+  l3_voltage:
+    name: Janitza L3 Voltage
+  total_power:
+    name: Janitza Total Power
+  import_power:
+    name: Janitza Import Power
+  export_power:
+    name: Janitza Export Power
+  communication_status:
+    name: Janitza Communication
+
+number:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MANUAL_CURRENT
+    name: Manual Current
+    min_value: 0
+    max_value: 32
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MAX_CURRENT
+    name: Max Current
+    min_value: 0
+    max_value: 32
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_CURRENT
+    name: Failsafe Current
+    min_value: 0
+    max_value: 6
+    step: 1
+
+select:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MODE
+    name: Charge Mode
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_MODE
+    name: Failsafe Mode
+
+switch:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: START
+    name: Start Charging
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: STOP
+    name: Stop Charging
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: ENABLE_PV_MODE
+    name: Enable PV Mode
+
+  - platform: gpio
+    name: Waveshare Relay 1 EVBox Known
+    pin: GPIO1
+    restore_mode: ALWAYS_OFF
+    disabled_by_default: true
+
+  - platform: gpio
+    name: Waveshare Relay 2 Janitza OK
+    pin: GPIO2
+    restore_mode: ALWAYS_OFF
+    disabled_by_default: true
+
+  - platform: gpio
+    name: Waveshare Relay 3 Charging Active
+    pin: GPIO41
+    restore_mode: ALWAYS_OFF
+    disabled_by_default: true
+
+  - platform: gpio
+    name: Waveshare Relay 4 Failsafe
+    pin: GPIO42
+    restore_mode: ALWAYS_OFF
+    disabled_by_default: true
