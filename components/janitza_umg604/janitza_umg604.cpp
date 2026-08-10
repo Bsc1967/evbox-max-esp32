@@ -1,6 +1,7 @@
 #include "janitza_umg604.h"
 #include "../evbox_max/evbox_max.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
@@ -19,8 +20,26 @@ void JanitzaUmg604Component::setup() {
 void JanitzaUmg604Component::update() {
   const bool ok = this->read_live_registers_();
   this->online_ = ok;
+
+  if (ok) {
+    const uint8_t phase_mask = this->detect_charge_phase_mask_();
+    const uint8_t detected = this->count_charge_phases_(phase_mask);
+    if (detected >= 1 && detected <= 3) {
+      this->detected_charge_phase_mask_ = phase_mask;
+      this->detected_charge_phases_ = detected;
+      if (this->evbox_parent_ != nullptr) {
+        this->evbox_parent_->set_charge_phases(detected);
+        this->evbox_parent_->set_active_phase_mask(phase_mask);
+      }
+      if (this->detected_charge_phases_sensor_ != nullptr) {
+        this->detected_charge_phases_sensor_->publish_state(detected);
+      }
+    }
+  }
+
   if (this->evbox_parent_ != nullptr) {
-    this->evbox_parent_->update_janitza(this->import_power_w_, this->export_power_w_, ok);
+    this->evbox_parent_->update_janitza(this->import_power_w_, this->export_power_w_, this->l1_current_a_,
+                                        this->l2_current_a_, this->l3_current_a_, ok);
   }
   this->publish_status_();
 }
@@ -45,12 +64,24 @@ bool JanitzaUmg604Component::read_live_registers_() {
   // time from several TCP round-trips to one.
   std::vector<uint16_t> registers;
   if (words <= 124 && this->read_holding_registers_(start, words, &registers)) {
-    if (this->decode_float_(registers, start, this->reg_l1_current_, &value) && this->l1_current_sensor_ != nullptr)
-      this->l1_current_sensor_->publish_state(value);
-    if (this->decode_float_(registers, start, this->reg_l2_current_, &value) && this->l2_current_sensor_ != nullptr)
-      this->l2_current_sensor_->publish_state(value);
-    if (this->decode_float_(registers, start, this->reg_l3_current_, &value) && this->l3_current_sensor_ != nullptr)
-      this->l3_current_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l1_current_, &value)) {
+      this->l1_current_a_ = value;
+      if (this->l1_current_sensor_ != nullptr) {
+        this->l1_current_sensor_->publish_state(value);
+      }
+    }
+    if (this->decode_float_(registers, start, this->reg_l2_current_, &value)) {
+      this->l2_current_a_ = value;
+      if (this->l2_current_sensor_ != nullptr) {
+        this->l2_current_sensor_->publish_state(value);
+      }
+    }
+    if (this->decode_float_(registers, start, this->reg_l3_current_, &value)) {
+      this->l3_current_a_ = value;
+      if (this->l3_current_sensor_ != nullptr) {
+        this->l3_current_sensor_->publish_state(value);
+      }
+    }
     if (this->decode_float_(registers, start, this->reg_l1_voltage_, &value) && this->l1_voltage_sensor_ != nullptr)
       this->l1_voltage_sensor_->publish_state(value);
     if (this->decode_float_(registers, start, this->reg_l2_voltage_, &value) && this->l2_voltage_sensor_ != nullptr)
@@ -65,10 +96,13 @@ bool JanitzaUmg604Component::read_live_registers_() {
     // compact read. This keeps configurability, but the normal path should be
     // the single-request read above.
     if (!this->read_float_register_(this->reg_l1_current_, &value)) return false;
+    this->l1_current_a_ = value;
     if (this->l1_current_sensor_ != nullptr) this->l1_current_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l2_current_, &value)) return false;
+    this->l2_current_a_ = value;
     if (this->l2_current_sensor_ != nullptr) this->l2_current_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l3_current_, &value)) return false;
+    this->l3_current_a_ = value;
     if (this->l3_current_sensor_ != nullptr) this->l3_current_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l1_voltage_, &value)) return false;
     if (this->l1_voltage_sensor_ != nullptr) this->l1_voltage_sensor_->publish_state(value);
@@ -211,6 +245,26 @@ bool JanitzaUmg604Component::modbus_request_(uint16_t address, uint16_t words, u
 
 uint16_t JanitzaUmg604Component::transaction_id_() {
   return this->next_transaction_id_++;
+}
+
+uint8_t JanitzaUmg604Component::detect_charge_phase_mask_() const {
+  uint8_t mask = 0;
+  if (std::fabs(this->l1_current_a_) >= this->phase_detect_current_) mask |= 0x01;
+  if (std::fabs(this->l2_current_a_) >= this->phase_detect_current_) mask |= 0x02;
+  if (std::fabs(this->l3_current_a_) >= this->phase_detect_current_) mask |= 0x04;
+
+  // No active phase usually means no charging or meter noise. Keep the last
+  // known mask so the controller does not bounce to a meaningless zero-phase
+  // state between sessions.
+  return mask != 0 ? mask : this->detected_charge_phase_mask_;
+}
+
+uint8_t JanitzaUmg604Component::count_charge_phases_(uint8_t phase_mask) const {
+  uint8_t count = 0;
+  if ((phase_mask & 0x01) != 0) count++;
+  if ((phase_mask & 0x02) != 0) count++;
+  if ((phase_mask & 0x04) != 0) count++;
+  return count;
 }
 
 void JanitzaUmg604Component::publish_status_() {
