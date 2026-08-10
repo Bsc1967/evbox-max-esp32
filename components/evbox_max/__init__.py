@@ -26,6 +26,9 @@ CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
 CONF_COMMUNICATION_STATUS = "communication_status"
 CONF_RS485_DE_PIN = "rs485_de_pin"
+CONF_CHARGE_PHASES = "charge_phases"
+CONF_CHARGER_BREAKER_CURRENT = "charger_breaker_current"
+CONF_MAIN_FUSE_CURRENT = "main_fuse_current"
 
 evbox_max_ns = cg.esphome_ns.namespace("evbox_max")
 
@@ -54,7 +57,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(EvboxMaxComponent),
         cv.Optional(CONF_MODE, default="MANUAL"): cv.enum(CHARGING_MODES, upper=True),
         cv.Optional(CONF_MAX_CURRENT, default=16): cv.float_range(min=0, max=32),
+        cv.Optional(CONF_CHARGER_BREAKER_CURRENT, default=16): cv.float_range(min=0, max=32),
+        cv.Optional(CONF_MAIN_FUSE_CURRENT, default=25): cv.float_range(min=0, max=80),
         cv.Optional(CONF_MANUAL_CURRENT, default=6): cv.float_range(min=0, max=32),
+        cv.Optional(CONF_CHARGE_PHASES, default=3): cv.one_of(1, 2, 3, int=True),
         cv.Optional(CONF_FAILSAFE_CURRENT, default=6): cv.float_range(min=0, max=16),
         cv.Optional(CONF_FAILSAFE_MODE, default="LIMIT_6A"): cv.enum(
             FAILSAFE_MODES, upper=True
@@ -100,7 +106,10 @@ async def to_code(config):
 
     cg.add(var.set_mode(config[CONF_MODE]))
     cg.add(var.set_max_current(config[CONF_MAX_CURRENT]))
+    cg.add(var.set_charger_breaker_current(config[CONF_CHARGER_BREAKER_CURRENT]))
+    cg.add(var.set_main_fuse_current(config[CONF_MAIN_FUSE_CURRENT]))
     cg.add(var.set_manual_current(config[CONF_MANUAL_CURRENT]))
+    cg.add(var.set_charge_phases(config[CONF_CHARGE_PHASES]))
     cg.add(var.set_failsafe_current(config[CONF_FAILSAFE_CURRENT]))
     cg.add(var.set_failsafe_mode(config[CONF_FAILSAFE_MODE]))
     cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
