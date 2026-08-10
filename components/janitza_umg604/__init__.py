@@ -19,6 +19,8 @@ CONF_IMPORT_POWER = "import_power"
 CONF_EXPORT_POWER = "export_power"
 CONF_COMMUNICATION_STATUS = "communication_status"
 CONF_EVBOX_MAX_ID = "evbox_max_id"
+CONF_PHASE_DETECT_CURRENT = "phase_detect_current"
+CONF_DETECTED_CHARGE_PHASES = "detected_charge_phases"
 
 janitza_ns = cg.esphome_ns.namespace("janitza_umg604")
 JanitzaUmg604Component = janitza_ns.class_("JanitzaUmg604Component", cg.PollingComponent)
@@ -32,6 +34,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_PORT, default=502): cv.port,
         cv.Optional(CONF_UNIT_ID, default=1): cv.int_range(min=1, max=247),
         cv.Optional(CONF_EVBOX_MAX_ID): cv.use_id(EvboxMaxComponent),
+        cv.Optional(CONF_PHASE_DETECT_CURRENT, default=5): cv.float_range(min=0.5, max=32),
         cv.Optional(CONF_REGISTERS, default={}): cv.Schema(
             {
                 cv.Optional(CONF_L1_CURRENT, default=1325): cv.positive_int,
@@ -99,6 +102,10 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="power",
             state_class="measurement",
         ),
+        cv.Optional(CONF_DETECTED_CHARGE_PHASES): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
     }
 ).extend(cv.polling_component_schema("1s"))
@@ -111,6 +118,7 @@ async def to_code(config):
     cg.add(var.set_host(str(config[CONF_IP_ADDRESS])))
     cg.add(var.set_port(config[CONF_PORT]))
     cg.add(var.set_unit_id(config[CONF_UNIT_ID]))
+    cg.add(var.set_phase_detect_current(config[CONF_PHASE_DETECT_CURRENT]))
     if CONF_EVBOX_MAX_ID in config:
         parent = await cg.get_variable(config[CONF_EVBOX_MAX_ID])
         cg.add(var.set_evbox_parent(parent))
@@ -136,6 +144,7 @@ async def to_code(config):
         (CONF_TOTAL_POWER, var.set_total_power_sensor),
         (CONF_IMPORT_POWER, var.set_import_power_sensor),
         (CONF_EXPORT_POWER, var.set_export_power_sensor),
+        (CONF_DETECTED_CHARGE_PHASES, var.set_detected_charge_phases_sensor),
     ]:
         if key in config:
             sens = await sensor.new_sensor(config[key])
