@@ -18,6 +18,8 @@ MAX RS485 protocol.
 - Session start/stop hooks
 - Communication watchdog and fault transition
 - Manual, load-balancing, PV-surplus, and disabled control modes
+- Configurable charge phase count for PV surplus and load-balancing current
+  calculations
 
 ## State Machine
 
