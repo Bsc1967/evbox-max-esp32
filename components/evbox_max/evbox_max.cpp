@@ -23,6 +23,10 @@ void EvboxMaxComponent::setup() {
     // ChargeBox can talk and the ESP only drives the bus while transmitting.
     this->rs485_de_pin_->digital_write(false);
   }
+  this->setup_output_pin_(this->relay_evbox_known_pin_);
+  this->setup_output_pin_(this->relay_janitza_ok_pin_);
+  this->setup_output_pin_(this->relay_charging_active_pin_);
+  this->setup_output_pin_(this->relay_failsafe_pin_);
   this->transition_(WAIT_REGISTRATION);
   this->last_rx_ms_ = millis();
   this->last_heartbeat_ms_ = millis();
@@ -60,6 +64,7 @@ void EvboxMaxComponent::loop() {
   }
 
   this->watchdog_();
+  this->update_relays_();
 
   if (now - this->last_publish_ms_ >= 1000) {
     this->publish_();
@@ -127,11 +132,10 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   this->inputs_.l3_current = l3_current;
   this->inputs_.ev_current = this->active_current_;
   this->inputs_.janitza_online = online;
-  if (online) {
-    this->ev_l1_voltage_v_ = l1_voltage;
-    this->ev_l2_voltage_v_ = l2_voltage;
-    this->ev_l3_voltage_v_ = l3_voltage;
-  }
+  this->janitza_online_ = online;
+  (void) l1_voltage;
+  (void) l2_voltage;
+  (void) l3_voltage;
   this->update_ev_measurements_();
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
@@ -276,6 +280,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::METER_PUSH:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         ESP_LOGD(TAG, "CB meter push data=%s", frame.data.c_str());
+        this->update_meter_from_push_(frame.data);
         this->send_packet_(frame.src, 0x66, "");
       }
       break;
@@ -356,22 +361,83 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   if (this->session_active_ && this->have_session_start_meter_ && meter_kwh >= this->session_start_meter_kwh_) {
     this->session_energy_kwh_ = meter_kwh - this->session_start_meter_kwh_;
   }
+
+  if (data.size() >= 132) {
+    this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 68, 4));
+    this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 72, 4));
+    this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 76, 4));
+    this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
+    this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 84, 4)) / 100.0f;
+    this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 88, 4)) / 100.0f;
+    this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 92, 4));
+    this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
+    this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
+    this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
+    this->update_ev_measurements_();
+    ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f",
+             this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
+             this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
+             this->ev_l3_power_factor_);
+  }
   ESP_LOGD(TAG, "CB meter %.3f kWh session %.3f kWh", this->meter_value_kwh_, this->session_energy_kwh_);
 }
 
+void EvboxMaxComponent::update_meter_from_push_(const std::string &data) {
+  if (data.size() < 44) return;
+
+  this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 0, 4));
+  this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 4, 4));
+  this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 8, 4));
+  this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 12, 4)) / 100.0f;
+  this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 16, 4)) / 100.0f;
+  this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 20, 4)) / 100.0f;
+  this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 24, 4)) / 1000.0f;
+  this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 28, 4)) / 1000.0f;
+  this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 32, 4)) / 1000.0f;
+
+  const uint32_t raw_meter = parse_hex_uint(data, 36, 8);
+  if (raw_meter > 0) {
+    const float meter_kwh = static_cast<float>(raw_meter) / 1000.0f;
+    if (meter_kwh > 0.0f && meter_kwh < 1000000.0f) {
+      this->meter_value_kwh_ = meter_kwh;
+      if (this->session_active_ && this->have_session_start_meter_ && meter_kwh >= this->session_start_meter_kwh_) {
+        this->session_energy_kwh_ = meter_kwh - this->session_start_meter_kwh_;
+      }
+    }
+  }
+  this->update_ev_measurements_();
+  ESP_LOGD(TAG, "CB meter push V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f kWh %.3f",
+           this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
+           this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
+           this->ev_l3_power_factor_, this->meter_value_kwh_);
+}
+
 void EvboxMaxComponent::update_ev_measurements_() {
-  const bool active = this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED;
-  const float amps = active ? this->active_current_ : 0.0f;
-  const uint8_t mask = this->inputs_.active_phase_mask;
+  const float pf1 = std::isnan(this->ev_l1_power_factor_) ? 1.0f : this->ev_l1_power_factor_;
+  const float pf2 = std::isnan(this->ev_l2_power_factor_) ? 1.0f : this->ev_l2_power_factor_;
+  const float pf3 = std::isnan(this->ev_l3_power_factor_) ? 1.0f : this->ev_l3_power_factor_;
+  const float v1 = std::isnan(this->ev_l1_voltage_v_) ? 0.0f : this->ev_l1_voltage_v_;
+  const float v2 = std::isnan(this->ev_l2_voltage_v_) ? 0.0f : this->ev_l2_voltage_v_;
+  const float v3 = std::isnan(this->ev_l3_voltage_v_) ? 0.0f : this->ev_l3_voltage_v_;
+  this->ev_power_w_ = this->ev_l1_current_a_ * v1 * pf1 + this->ev_l2_current_a_ * v2 * pf2 +
+                      this->ev_l3_current_a_ * v3 * pf3;
+}
 
-  this->ev_l1_current_a_ = (mask & 0x01) != 0 ? amps : 0.0f;
-  this->ev_l2_current_a_ = (mask & 0x02) != 0 ? amps : 0.0f;
-  this->ev_l3_current_a_ = (mask & 0x04) != 0 ? amps : 0.0f;
+void EvboxMaxComponent::setup_output_pin_(GPIOPin *pin) {
+  if (pin == nullptr) return;
+  pin->setup();
+  pin->digital_write(false);
+}
 
-  const float v1 = std::isnan(this->ev_l1_voltage_v_) ? 230.0f : this->ev_l1_voltage_v_;
-  const float v2 = std::isnan(this->ev_l2_voltage_v_) ? 230.0f : this->ev_l2_voltage_v_;
-  const float v3 = std::isnan(this->ev_l3_voltage_v_) ? 230.0f : this->ev_l3_voltage_v_;
-  this->ev_power_w_ = this->ev_l1_current_a_ * v1 + this->ev_l2_current_a_ * v2 + this->ev_l3_current_a_ * v3;
+void EvboxMaxComponent::update_relays_() {
+  const bool charging_active = this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING;
+  const bool failsafe = !this->janitza_online_ &&
+                        (this->controller_.mode() == CHARGING_MODE_LOAD_BALANCING ||
+                         this->controller_.mode() == CHARGING_MODE_PV_SURPLUS);
+  if (this->relay_evbox_known_pin_ != nullptr) this->relay_evbox_known_pin_->digital_write(this->chargebox_address_ != 0);
+  if (this->relay_janitza_ok_pin_ != nullptr) this->relay_janitza_ok_pin_->digital_write(this->janitza_online_);
+  if (this->relay_charging_active_pin_ != nullptr) this->relay_charging_active_pin_->digital_write(charging_active);
+  if (this->relay_failsafe_pin_ != nullptr) this->relay_failsafe_pin_->digital_write(failsafe);
 }
 
 void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
@@ -495,6 +561,15 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->l3_voltage_sensor_ != nullptr && !std::isnan(this->ev_l3_voltage_v_)) {
     this->l3_voltage_sensor_->publish_state(this->ev_l3_voltage_v_);
+  }
+  if (this->l1_power_factor_sensor_ != nullptr && !std::isnan(this->ev_l1_power_factor_)) {
+    this->l1_power_factor_sensor_->publish_state(this->ev_l1_power_factor_);
+  }
+  if (this->l2_power_factor_sensor_ != nullptr && !std::isnan(this->ev_l2_power_factor_)) {
+    this->l2_power_factor_sensor_->publish_state(this->ev_l2_power_factor_);
+  }
+  if (this->l3_power_factor_sensor_ != nullptr && !std::isnan(this->ev_l3_power_factor_)) {
+    this->l3_power_factor_sensor_->publish_state(this->ev_l3_power_factor_);
   }
   if (this->power_sensor_ != nullptr) {
     this->power_sensor_->publish_state(this->ev_power_w_);
