@@ -215,6 +215,28 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       // for local authorisation/start commands.
       this->transition_(IDLE);
       break;
+    case FrameType::AUTHENTICATE_CARD:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->chargebox_address_ = frame.src;
+        this->evbox_online_ = true;
+        const uint8_t auth_state = parse_hex_byte(frame.data, 0);
+        const uint8_t card_len = parse_hex_byte(frame.data, 2);
+        const size_t available = frame.data.size() > 4 ? frame.data.size() - 4 : 0;
+        const size_t safe_len = std::min<size_t>(card_len, available);
+        const std::string card = frame.data.substr(4, safe_len);
+        const bool charge_flow_allowed = this->state_ == AUTHORIZED || this->state_ == STARTING ||
+                                         this->state_ == SESSION_STARTING || this->state_ == CHARGING;
+        const bool access_granted = !this->stop_requested_ && (card == "000000AS" || charge_flow_allowed);
+        ESP_LOGI(TAG, "CB authenticate request state=0x%02X card=%s access=%s", auth_state, card.c_str(),
+                 access_granted ? "granted" : "denied");
+        const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
+        this->send_packet_(frame.src, 0x22,
+                           hex_byte(access_granted ? 0x01 : 0x12) + hex_byte(card_len) + padded_card + "FFFF");
+        if (access_granted && this->state_ == IDLE) {
+          this->transition_(AUTHORIZED);
+        }
+      }
+      break;
     case FrameType::CURRENT_REQUEST:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         this->chargebox_address_ = frame.src;

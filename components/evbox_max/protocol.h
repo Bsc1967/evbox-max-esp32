@@ -20,6 +20,7 @@ enum class FrameType : uint8_t {
   CONFIG_RESPONSE = 0x33,
   CONFIG_SET_RESPONSE = 0x34,
   HEARTBEAT = 0x21,
+  AUTHENTICATE_CARD = 0x22,
   METER_UPDATE_INTERVAL = 0x65,
   STATE_UPDATE = 0x26,
   CURRENT_REQUEST = 0x6A,
@@ -64,3 +65,4 @@ class FrameParser {
 
 }  // namespace evbox_max
 }  // namespace esphome
+

@@ -60,6 +60,7 @@ FrameType frame_type_for_cmd(uint8_t cmd) {
     case 0x11: return FrameType::REGISTRATION;
     case 0x13: return FrameType::INFO_RESPONSE;
     case 0x21: return FrameType::HEARTBEAT;
+    case 0x22: return FrameType::AUTHENTICATE_CARD;
     case 0x23: return FrameType::METERING_START;
     case 0x24: return FrameType::METERING_END;
     case 0x26: return FrameType::STATE_UPDATE;
@@ -144,3 +145,4 @@ void FrameParser::reset() {
 
 }  // namespace evbox_max
 }  // namespace esphome
+
