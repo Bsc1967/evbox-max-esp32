@@ -53,7 +53,8 @@ void EvboxMaxComponent::loop() {
     // recalculated locally from the selected control mode and Janitza inputs.
     this->send_heartbeat_();
     if (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED) {
-      this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
+      this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+      this->send_current_setpoint_(this->desired_current_);
     }
     this->last_heartbeat_ms_ = now;
   }
@@ -134,6 +135,7 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   this->update_ev_measurements_();
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
+  this->desired_current_ = next_current;
   if (next_current < this->active_current_) {
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
@@ -206,7 +208,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->evbox_online_ = true;
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
         if (this->state_ != CHARGING) this->transition_(STARTING);
-        this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
+        this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+        this->send_current_setpoint_(this->desired_current_);
       }
       break;
     case FrameType::CURRENT_SETPOINT:
@@ -241,10 +244,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (frame.data.size() >= 128) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
           if (raw_limit > 0 && raw_limit < 1000) {
-            this->active_current_ = static_cast<float>(raw_limit) / 10.0f;
+            this->returned_current_limit_ = static_cast<float>(raw_limit) / 10.0f;
+            this->active_current_ = this->returned_current_limit_;
             this->current_limit_returned_ = true;
             this->update_ev_measurements_();
-            ESP_LOGI(TAG, "CB returned active current limit %.1f A", this->active_current_);
+            ESP_LOGI(TAG, "CB returned active current limit %.1f A", this->returned_current_limit_);
           }
         }
         this->update_meter_from_state_(frame.data);
@@ -426,12 +430,13 @@ void EvboxMaxComponent::send_heartbeat_() {
 
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
   if (this->chargebox_address_ == 0) return;
+  this->commanded_current_ = amps;
   this->active_current_ = amps;
   this->current_limit_returned_ = false;
   this->update_ev_measurements_();
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
   const std::string value = hex_word(tenths);
-  ESP_LOGI(TAG, "Sending current limit %.1f A to CB", static_cast<float>(tenths) / 10.0f);
+  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB", static_cast<float>(tenths) / 10.0f);
   this->send_packet_(this->chargebox_address_, 0x6B, std::string("01") + hex_word(60) + value + value + value);
 }
 
@@ -462,7 +467,16 @@ void EvboxMaxComponent::publish_() {
     this->ev_current_sensor_->publish_state(this->active_current_);
   }
   if (this->current_limit_sensor_ != nullptr) {
-    this->current_limit_sensor_->publish_state(this->active_current_);
+    this->current_limit_sensor_->publish_state(this->commanded_current_);
+  }
+  if (this->desired_current_sensor_ != nullptr) {
+    this->desired_current_sensor_->publish_state(this->desired_current_);
+  }
+  if (this->commanded_current_sensor_ != nullptr) {
+    this->commanded_current_sensor_->publish_state(this->commanded_current_);
+  }
+  if (this->returned_current_limit_sensor_ != nullptr && !std::isnan(this->returned_current_limit_)) {
+    this->returned_current_limit_sensor_->publish_state(this->returned_current_limit_);
   }
   if (this->l1_current_sensor_ != nullptr) {
     this->l1_current_sensor_->publish_state(this->ev_l1_current_a_);
