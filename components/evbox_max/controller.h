@@ -23,9 +23,16 @@ struct ControlInputs {
   float charger_breaker_current{16.0f};
   float main_fuse_current{25.0f};
   float ev_current{0.0f};
+  float ev_l1_current{0.0f};
+  float ev_l2_current{0.0f};
+  float ev_l3_current{0.0f};
   float l1_current{0.0f};
   float l2_current{0.0f};
   float l3_current{0.0f};
+  float l1_power_w{0.0f};
+  float l2_power_w{0.0f};
+  float l3_power_w{0.0f};
+  float grid_total_power_w{0.0f};
   float grid_import_w{0.0f};
   float grid_export_w{0.0f};
   uint8_t charge_phases{3};
