@@ -156,9 +156,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
-        if (!this->session_active_) this->session_active_ = true;
         if (this->state_ != CHARGING) this->transition_(STARTING);
         this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
+      }
+      break;
+    case FrameType::CURRENT_SETPOINT:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->chargebox_address_ = frame.src;
+        this->evbox_online_ = true;
+        ESP_LOGD(TAG, "CB acknowledged current setpoint");
       }
       break;
     case FrameType::STATE_UPDATE:
@@ -167,11 +173,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->evbox_online_ = true;
         const uint8_t code = parse_hex_byte(frame.data, 0);
         ESP_LOGI(TAG, "CB state cmd26 status=0x%02X data_len=%u", code, static_cast<unsigned>(frame.data.size()));
-        if (code == 0x02) this->transition_(IDLE);
-        else if (code == 0x17) this->transition_(AUTHORIZED);
+        if (code == 0x02) {
+          this->session_active_ = false;
+          this->transition_(IDLE);
+        } else if (code == 0x17) {
+          this->session_active_ = false;
+          this->transition_(AUTHORIZED);
+        }
         else if (code == 0x47 || code == 0x4A) this->transition_(STARTING);
-        else if (code == 0x48) this->transition_(CHARGING);
-        else if (code == 0x4B) this->transition_(FINISHING);
+        else if (code == 0x48) {
+          this->session_active_ = true;
+          this->transition_(CHARGING);
+        } else if (code == 0x4B) {
+          this->session_active_ = false;
+          this->transition_(FINISHING);
+        }
         else if (code == 0x0A) this->transition_(FAULT);
         if (frame.data.size() >= 128) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
