@@ -156,6 +156,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t session_{1};
   bool evbox_online_{false};
   bool session_active_{false};
+  bool stop_requested_{false};
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
   float active_current_{0.0f};

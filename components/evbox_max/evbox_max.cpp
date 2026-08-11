@@ -56,7 +56,8 @@ void EvboxMaxComponent::loop() {
     // TX path: heartbeat proves the controller is alive; current setpoint is
     // recalculated locally from the selected control mode and Janitza inputs.
     this->send_heartbeat_();
-    if (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED) {
+    if (!this->stop_requested_ &&
+        (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED)) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
     }
@@ -146,7 +147,7 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   this->desired_current_ = next_current;
   const bool charge_flow_active = this->session_active_ || this->state_ == AUTHORIZED ||
                                   this->state_ == STARTING || this->state_ == CHARGING;
-  if (charge_flow_active && next_current < this->active_current_) {
+  if (!this->stop_requested_ && charge_flow_active && next_current < this->active_current_) {
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
     this->send_current_setpoint_(next_current);
@@ -155,11 +156,13 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 }
 
 void EvboxMaxComponent::start_session() {
+  this->stop_requested_ = false;
   this->session_active_ = true;
   this->transition_(AUTHORIZED);
 }
 
 void EvboxMaxComponent::stop_session() {
+  this->stop_requested_ = true;
   this->session_active_ = false;
   this->send_current_setpoint_(0.0f);
   this->transition_(FINISHING);
@@ -217,7 +220,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
         const bool charge_flow_allowed = this->session_active_ || this->state_ == AUTHORIZED ||
                                          this->state_ == STARTING || this->state_ == CHARGING;
-        if (charge_flow_allowed) {
+        if (!this->stop_requested_ && charge_flow_allowed) {
           if (this->state_ != CHARGING) this->transition_(STARTING);
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           this->send_current_setpoint_(this->desired_current_);
@@ -245,14 +248,28 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         ESP_LOGI(TAG, "CB state cmd26 status=0x%02X is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
                  code, is_charging, led_colour, lock_state, cable_current, static_cast<unsigned>(frame.data.size()));
         if (code == 0x02) {
+          this->stop_requested_ = false;
           this->session_active_ = false;
           this->transition_(IDLE);
         } else if (code == 0x17) {
-          this->session_active_ = false;
-          this->transition_(AUTHORIZED);
+          if (this->stop_requested_) {
+            this->session_active_ = false;
+            this->transition_(FINISHING);
+          } else {
+            this->session_active_ = false;
+            this->transition_(AUTHORIZED);
+          }
         }
-        else if (code == 0x47 || code == 0x4A) this->transition_(STARTING);
+        else if (code == 0x47 || code == 0x4A) {
+          if (this->stop_requested_) {
+            this->session_active_ = false;
+            this->transition_(FINISHING);
+          } else {
+            this->transition_(STARTING);
+          }
+        }
         else if (code == 0x48) {
+          this->stop_requested_ = false;
           this->session_active_ = true;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
@@ -279,9 +296,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::METERING_START:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->session_active_ = true;
-        this->session_start_meter_kwh_ = this->meter_value_kwh_;
-        this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
+        this->session_active_ = !this->stop_requested_;
+        if (!this->stop_requested_) {
+          this->session_start_meter_kwh_ = this->meter_value_kwh_;
+          this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
+        }
         const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                  : std::string("01") + hex_dword(this->session_);
         this->send_packet_(frame.src, 0x23, data);
@@ -488,7 +507,8 @@ void EvboxMaxComponent::setup_output_pin_(GPIOPin *pin) {
 }
 
 void EvboxMaxComponent::update_relays_() {
-  const bool charging_active = this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING;
+  const bool charging_active = !this->stop_requested_ &&
+                               (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING);
   const bool failsafe = !this->janitza_online_ &&
                         (this->controller_.mode() == CHARGING_MODE_LOAD_BALANCING ||
                          this->controller_.mode() == CHARGING_MODE_PV_SURPLUS);
@@ -662,7 +682,7 @@ void EvboxMaxComponent::publish_() {
     this->communication_text_sensor_->publish_state(this->communication_name_());
   }
   if (this->ev_current_sensor_ != nullptr) {
-    this->ev_current_sensor_->publish_state(this->active_current_);
+    this->ev_current_sensor_->publish_state(this->inputs_.ev_current);
   }
   if (this->current_limit_sensor_ != nullptr) {
     this->current_limit_sensor_->publish_state(this->commanded_current_);
