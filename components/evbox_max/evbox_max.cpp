@@ -1,4 +1,5 @@
 #include "evbox_max.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include <algorithm>
 #include <cstdlib>
@@ -10,8 +11,12 @@ static const char *const TAG = "evbox_max";
 static constexpr uint8_t ADDR_CP = 0x80;
 static constexpr uint8_t ADDR_BROADCAST = 0xBC;
 static constexpr uint16_t ACK = 0xAA00;
+static constexpr uint32_t SETTINGS_MAGIC = 0x45564258UL;
+static constexpr uint16_t SETTINGS_VERSION = 1;
 
 void EvboxMaxComponent::setup() {
+  this->settings_pref_ = global_preferences->make_preference<StoredSettings>(fnv1_hash("evbox_max_settings"));
+  this->load_settings_();
   if (this->rs485_de_pin_ != nullptr) {
     this->rs485_de_pin_->setup();
     // MAX3485 is half-duplex. Keep the driver disabled by default so the
@@ -71,14 +76,42 @@ void EvboxMaxComponent::dump_config() {
 
 void EvboxMaxComponent::set_mode(ChargingMode mode) {
   this->controller_.set_mode(mode);
+  this->save_settings_();
 }
 
 void EvboxMaxComponent::set_failsafe_mode(FailsafeMode mode) {
   this->controller_.set_failsafe_mode(mode);
+  this->save_settings_();
+}
+
+void EvboxMaxComponent::set_max_current(float current) {
+  this->inputs_.max_current = current;
+  this->save_settings_();
+}
+
+void EvboxMaxComponent::set_charger_breaker_current(float current) {
+  this->inputs_.charger_breaker_current = current;
+  this->save_settings_();
+}
+
+void EvboxMaxComponent::set_main_fuse_current(float current) {
+  this->inputs_.main_fuse_current = current;
+  this->save_settings_();
+}
+
+void EvboxMaxComponent::set_manual_current(float current) {
+  this->inputs_.manual_current = current;
+  this->save_settings_();
 }
 
 void EvboxMaxComponent::set_failsafe_current(float current) {
   this->controller_.set_failsafe_current(current);
+  this->save_settings_();
+}
+
+void EvboxMaxComponent::set_pv_enabled(bool enabled) {
+  this->inputs_.pv_enabled = enabled;
+  this->save_settings_();
 }
 
 void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
@@ -195,6 +228,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->active_current_ = static_cast<float>(raw_limit) / 10.0f;
           }
         }
+        this->update_meter_from_state_(frame.data);
         const std::string ack_data = this->chargebox_firmware_ > 100 ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                      : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
@@ -203,6 +237,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::METERING_START:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         this->session_active_ = true;
+        this->session_start_meter_kwh_ = this->meter_value_kwh_;
+        this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
         const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                  : std::string("01") + hex_dword(this->session_);
         this->send_packet_(frame.src, 0x23, data);
@@ -236,6 +272,67 @@ void EvboxMaxComponent::transition_(EvboxState state) {
   // publishing can be attached in one place.
   ESP_LOGI(TAG, "State %s -> %u", this->state_name_(), state);
   this->state_ = state;
+}
+
+void EvboxMaxComponent::load_settings_() {
+  StoredSettings settings{};
+  if (this->settings_pref_.load(&settings) && settings.magic == SETTINGS_MAGIC && settings.version == SETTINGS_VERSION) {
+    this->apply_settings_(settings);
+    ESP_LOGI(TAG, "Restored HA settings from NVS");
+  } else {
+    ESP_LOGI(TAG, "No stored HA settings found; using YAML defaults");
+  }
+  this->settings_restored_ = true;
+}
+
+void EvboxMaxComponent::save_settings_() {
+  if (!this->settings_restored_) return;
+  const auto settings = this->current_settings_();
+  this->settings_pref_.save(&settings);
+}
+
+EvboxMaxComponent::StoredSettings EvboxMaxComponent::current_settings_() const {
+  StoredSettings settings{};
+  settings.magic = SETTINGS_MAGIC;
+  settings.version = SETTINGS_VERSION;
+  settings.mode = static_cast<uint8_t>(this->controller_.mode());
+  settings.failsafe_mode = static_cast<uint8_t>(this->controller_.failsafe_mode());
+  settings.pv_enabled = this->inputs_.pv_enabled;
+  settings.manual_current = this->inputs_.manual_current;
+  settings.max_current = this->inputs_.max_current;
+  settings.charger_breaker_current = this->inputs_.charger_breaker_current;
+  settings.main_fuse_current = this->inputs_.main_fuse_current;
+  settings.failsafe_current = this->controller_.failsafe_current();
+  return settings;
+}
+
+void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
+  this->controller_.set_mode(static_cast<ChargingMode>(settings.mode));
+  this->controller_.set_failsafe_mode(static_cast<FailsafeMode>(settings.failsafe_mode));
+  this->controller_.set_failsafe_current(settings.failsafe_current);
+  this->inputs_.pv_enabled = settings.pv_enabled;
+  this->inputs_.manual_current = settings.manual_current;
+  this->inputs_.max_current = settings.max_current;
+  this->inputs_.charger_breaker_current = settings.charger_breaker_current;
+  this->inputs_.main_fuse_current = settings.main_fuse_current;
+}
+
+void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
+  if (data.size() < 26) return;
+
+  const uint32_t raw_meter = parse_hex_uint(data, 18, 8);
+  if (raw_meter == 0) return;
+
+  // EVBox cmd26 carries the ChargeBox meter counter in Wh at this offset in
+  // captures from the working local test app. Publish as kWh for Home Assistant.
+  const float meter_kwh = static_cast<float>(raw_meter) / 1000.0f;
+  if (meter_kwh <= 0.0f || meter_kwh > 1000000.0f) return;
+
+  this->meter_value_kwh_ = meter_kwh;
+  if (this->session_active_ && this->have_session_start_meter_ && meter_kwh >= this->session_start_meter_kwh_) {
+    this->session_energy_kwh_ = meter_kwh - this->session_start_meter_kwh_;
+  }
+  ESP_LOGD(TAG, "CB meter %.3f kWh session %.3f kWh", this->meter_value_kwh_, this->session_energy_kwh_);
 }
 
 void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
