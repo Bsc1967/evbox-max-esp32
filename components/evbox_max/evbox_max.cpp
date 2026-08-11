@@ -143,7 +143,9 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
   this->desired_current_ = next_current;
-  if (next_current < this->active_current_) {
+  const bool charge_flow_active = this->session_active_ || this->state_ == AUTHORIZED ||
+                                  this->state_ == STARTING || this->state_ == CHARGING;
+  if (charge_flow_active && next_current < this->active_current_) {
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
     this->send_current_setpoint_(next_current);
@@ -214,9 +216,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
-        if (this->state_ != CHARGING) this->transition_(STARTING);
-        this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-        this->send_current_setpoint_(this->desired_current_);
+        const bool charge_flow_allowed = this->session_active_ || this->state_ == AUTHORIZED ||
+                                         this->state_ == STARTING || this->state_ == CHARGING;
+        if (charge_flow_allowed) {
+          if (this->state_ != CHARGING) this->transition_(STARTING);
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          this->send_current_setpoint_(this->desired_current_);
+        } else {
+          ESP_LOGI(TAG, "CB current request acknowledged; no current limit sent while state=%s", this->state_name_());
+        }
       }
       break;
     case FrameType::CURRENT_SETPOINT:
@@ -231,7 +239,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         const uint8_t code = parse_hex_byte(frame.data, 0);
-        ESP_LOGI(TAG, "CB state cmd26 status=0x%02X data_len=%u", code, static_cast<unsigned>(frame.data.size()));
+        const uint8_t is_charging = parse_hex_byte(frame.data, 6);
+        const uint8_t led_colour = parse_hex_byte(frame.data, 8);
+        const uint8_t lock_state = parse_hex_byte(frame.data, 10);
+        const uint8_t cable_current = parse_hex_byte(frame.data, 12);
+        ESP_LOGI(TAG, "CB state cmd26 status=0x%02X is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
+                 code, is_charging, led_colour, lock_state, cable_current, static_cast<unsigned>(frame.data.size()));
         if (code == 0x02) {
           this->session_active_ = false;
           this->transition_(IDLE);
@@ -250,12 +263,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         else if (code == 0x0A) this->transition_(FAULT);
         if (frame.data.size() >= 128) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
-          if (raw_limit > 0 && raw_limit < 1000) {
+          if (raw_limit > 0 && raw_limit <= 320) {
             this->returned_current_limit_ = static_cast<float>(raw_limit) / 10.0f;
-            this->active_current_ = this->returned_current_limit_;
             this->current_limit_returned_ = true;
             this->update_ev_measurements_();
             ESP_LOGI(TAG, "CB returned active current limit %.1f A", this->returned_current_limit_);
+          } else if (raw_limit > 0) {
+            ESP_LOGD(TAG, "Ignoring non-current cmd26 field at current-limit offset: raw=%u", raw_limit);
           }
         }
         this->update_meter_from_state_(frame.data);
@@ -519,6 +533,9 @@ void EvboxMaxComponent::send_meter_modbus_config_(const std::string &config) {
 
   std::string patched = config;
   patched.replace(30, 2, "01");
+  if (this->chargebox_firmware_ > 100 && patched.size() == 74) {
+    patched += "0000000003E8010000";
+  }
   ESP_LOGI(TAG, "Setting CB meter config to Modbus/serial address 1");
   this->send_packet_(this->chargebox_address_, 0x34, patched);
 }
