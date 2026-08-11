@@ -15,6 +15,7 @@ esp32:
 
 external_components:
   - source: github://Bsc1967/evbox-max-esp32@main
+    refresh: 0s
     components:
       - evbox_max
       - janitza_umg604
