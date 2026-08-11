@@ -23,6 +23,13 @@ CONF_STATUS = "status"
 CONF_STATE = "state"
 CONF_EV_CURRENT = "ev_current"
 CONF_CURRENT_LIMIT = "current_limit"
+CONF_L1_CURRENT = "l1_current"
+CONF_L2_CURRENT = "l2_current"
+CONF_L3_CURRENT = "l3_current"
+CONF_L1_VOLTAGE = "l1_voltage"
+CONF_L2_VOLTAGE = "l2_voltage"
+CONF_L3_VOLTAGE = "l3_voltage"
+CONF_POWER = "power"
 CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
 CONF_COMMUNICATION_STATUS = "communication_status"
@@ -84,6 +91,48 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="current",
             state_class="measurement",
         ),
+        cv.Optional(CONF_L1_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L1_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
         cv.Optional(CONF_SESSION_ENERGY): sensor.sensor_schema(
             unit_of_measurement="kWh",
             accuracy_decimals=3,
@@ -141,6 +190,27 @@ async def to_code(config):
     if CONF_CURRENT_LIMIT in config:
         sens = await sensor.new_sensor(config[CONF_CURRENT_LIMIT])
         cg.add(var.set_current_limit_sensor(sens))
+    if CONF_L1_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_L1_CURRENT])
+        cg.add(var.set_l1_current_sensor(sens))
+    if CONF_L2_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_L2_CURRENT])
+        cg.add(var.set_l2_current_sensor(sens))
+    if CONF_L3_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_L3_CURRENT])
+        cg.add(var.set_l3_current_sensor(sens))
+    if CONF_L1_VOLTAGE in config:
+        sens = await sensor.new_sensor(config[CONF_L1_VOLTAGE])
+        cg.add(var.set_l1_voltage_sensor(sens))
+    if CONF_L2_VOLTAGE in config:
+        sens = await sensor.new_sensor(config[CONF_L2_VOLTAGE])
+        cg.add(var.set_l2_voltage_sensor(sens))
+    if CONF_L3_VOLTAGE in config:
+        sens = await sensor.new_sensor(config[CONF_L3_VOLTAGE])
+        cg.add(var.set_l3_voltage_sensor(sens))
+    if CONF_POWER in config:
+        sens = await sensor.new_sensor(config[CONF_POWER])
+        cg.add(var.set_power_sensor(sens))
     if CONF_SESSION_ENERGY in config:
         sens = await sensor.new_sensor(config[CONF_SESSION_ENERGY])
         cg.add(var.set_session_energy_sensor(sens))
