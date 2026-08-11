@@ -201,12 +201,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->schedule_startup_step_(5, 300);
       break;
     case FrameType::CONFIG_RESPONSE:
-      ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve working meter settings");
+      ESP_LOGI(TAG, "CB config received; checking autostart while preserving existing meter settings");
+      this->send_autostart_config_(frame.data);
       this->transition_(IDLE);
       break;
     case FrameType::CONFIG_SET_RESPONSE:
       if (frame.data == hex_word(ACK)) {
-        ESP_LOGI(TAG, "CB config accepted: meter set to Modbus/serial address 1");
+        ESP_LOGI(TAG, "CB config accepted");
       } else {
         ESP_LOGW(TAG, "CB config response data=%s", frame.data.c_str());
       }
@@ -644,44 +645,24 @@ void EvboxMaxComponent::send_meter_update_interval_() {
   this->send_packet_(this->chargebox_address_, 0x65, "000F");
 }
 
-void EvboxMaxComponent::send_meter_modbus_config_(const std::string &config) {
+void EvboxMaxComponent::send_autostart_config_(const std::string &config) {
   if (this->chargebox_address_ == 0) return;
-  if (config.size() < 60) {
-    ESP_LOGW(TAG, "CB config too short for meter mode patch: len=%u", static_cast<unsigned>(config.size()));
+  if (config.size() < 56) {
+    ESP_LOGW(TAG, "CB config too short for autostart patch: len=%u", static_cast<unsigned>(config.size()));
     this->transition_(IDLE);
     return;
   }
 
-  const uint32_t connection_timeout = parse_hex_uint(config, 0, 8, 3600);
-  const uint32_t heartbeat_interval = parse_hex_uint(config, 8, 8, 900);
-  const uint32_t meter_update_interval = parse_hex_uint(config, 16, 8, 30);
-  const uint8_t relay = parse_hex_byte(config, 24, 0x03);
-  const uint8_t phase = parse_hex_byte(config, 32, 0x01);
-  const uint8_t tethered = parse_hex_byte(config, 34, 0x00);
-  const uint8_t led_brightness = parse_hex_byte(config, 36, 0x30);
   const uint8_t auto_start = parse_hex_byte(config, 54, 0x01);
-  const uint8_t enable_cmd2a = parse_hex_byte(config, 56, 0x00);
-  const uint8_t auto_stop = parse_hex_byte(config, 58, 0x01);
-
-  std::string patched = "FFFFFFFF";
-  patched += hex_byte(led_brightness);
-  patched += hex_byte(relay);
-  patched += "0000";
-  patched += "01";
-  patched += hex_byte(phase);
-  patched += hex_byte(tethered);
-  patched += "0100000000000000";
-  patched += hex_byte(auto_start);
-  patched += hex_byte(enable_cmd2a);
-  patched += hex_dword(connection_timeout);
-  patched += hex_dword(heartbeat_interval);
-  patched += hex_dword(meter_update_interval);
-  patched += hex_byte(auto_stop);
-  if (this->chargebox_firmware_ > 100) {
-    patched += "0000000003E8010000";
+  if (auto_start == 0x01) {
+    ESP_LOGI(TAG, "CB autostart already enabled; config unchanged");
+    return;
   }
+
+  std::string patched = config;
+  patched.replace(54, 2, "01");
   this->pending_config_34_ = patched;
-  ESP_LOGI(TAG, "Setting CB meter config to Modbus/serial address 1 after startup delay");
+  ESP_LOGI(TAG, "Enabling CB autostart with minimal config patch; meter settings preserved");
   this->schedule_startup_step_(6, 800);
 }
 
