@@ -170,6 +170,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->send_packet_(ADDR_BROADCAST, 0x11, this->chargebox_serial_ + hex_byte(this->chargebox_address_) + "03");
       this->transition_(READ_INFO);
       this->send_connection_state_();
+      this->send_meter_update_interval_();
       this->send_packet_(this->chargebox_address_, 0x13, "");
       this->send_status_update_request_();
       break;
@@ -180,7 +181,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->send_packet_(this->chargebox_address_, 0x33, "");
       break;
     case FrameType::CONFIG_RESPONSE:
-      // Registration and startup reads are done; the controller may now wait
+      this->send_meter_modbus_config_(frame.data);
+      break;
+    case FrameType::CONFIG_SET_RESPONSE:
+      if (frame.data == hex_word(ACK)) {
+        ESP_LOGI(TAG, "CB config accepted: meter set to Modbus/serial address 1");
+      } else {
+        ESP_LOGW(TAG, "CB config response data=%s", frame.data.c_str());
+      }
+      // Registration and startup config are done; the controller may now wait
       // for local authorisation/start commands.
       this->transition_(IDLE);
       break;
@@ -252,6 +261,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::METER_PUSH:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        ESP_LOGD(TAG, "CB meter push data=%s", frame.data.c_str());
         this->send_packet_(frame.src, 0x66, "");
       }
       break;
@@ -363,6 +373,25 @@ void EvboxMaxComponent::send_connection_state_() {
 void EvboxMaxComponent::send_status_update_request_() {
   if (this->chargebox_address_ == 0) return;
   this->send_packet_(this->chargebox_address_, 0x18, "02");
+}
+
+void EvboxMaxComponent::send_meter_update_interval_() {
+  if (this->chargebox_address_ == 0) return;
+  this->send_packet_(this->chargebox_address_, 0x65, "000F");
+}
+
+void EvboxMaxComponent::send_meter_modbus_config_(const std::string &config) {
+  if (this->chargebox_address_ == 0) return;
+  if (config.size() < 32) {
+    ESP_LOGW(TAG, "CB config too short for meter mode patch: len=%u", static_cast<unsigned>(config.size()));
+    this->transition_(IDLE);
+    return;
+  }
+
+  std::string patched = config;
+  patched.replace(30, 2, "01");
+  ESP_LOGI(TAG, "Setting CB meter config to Modbus/serial address 1");
+  this->send_packet_(this->chargebox_address_, 0x34, patched);
 }
 
 void EvboxMaxComponent::send_heartbeat_() {
