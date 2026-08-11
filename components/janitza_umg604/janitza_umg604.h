@@ -83,6 +83,9 @@ class JanitzaUmg604Component : public PollingComponent {
   float l1_current_a_{0.0f};
   float l2_current_a_{0.0f};
   float l3_current_a_{0.0f};
+  float l1_voltage_v_{0.0f};
+  float l2_voltage_v_{0.0f};
+  float l3_voltage_v_{0.0f};
   float phase_detect_current_{5.0f};
   uint8_t detected_charge_phases_{3};
   uint8_t detected_charge_phase_mask_{0x07};
