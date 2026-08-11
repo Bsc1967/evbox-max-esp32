@@ -39,7 +39,8 @@ void JanitzaUmg604Component::update() {
 
   if (this->evbox_parent_ != nullptr) {
     this->evbox_parent_->update_janitza(this->import_power_w_, this->export_power_w_, this->l1_current_a_,
-                                        this->l2_current_a_, this->l3_current_a_, ok);
+                                        this->l2_current_a_, this->l3_current_a_, this->l1_voltage_v_,
+                                        this->l2_voltage_v_, this->l3_voltage_v_, ok);
   }
   this->publish_status_();
 }
@@ -82,12 +83,18 @@ bool JanitzaUmg604Component::read_live_registers_() {
         this->l3_current_sensor_->publish_state(value);
       }
     }
-    if (this->decode_float_(registers, start, this->reg_l1_voltage_, &value) && this->l1_voltage_sensor_ != nullptr)
-      this->l1_voltage_sensor_->publish_state(value);
-    if (this->decode_float_(registers, start, this->reg_l2_voltage_, &value) && this->l2_voltage_sensor_ != nullptr)
-      this->l2_voltage_sensor_->publish_state(value);
-    if (this->decode_float_(registers, start, this->reg_l3_voltage_, &value) && this->l3_voltage_sensor_ != nullptr)
-      this->l3_voltage_sensor_->publish_state(value);
+    if (this->decode_float_(registers, start, this->reg_l1_voltage_, &value)) {
+      this->l1_voltage_v_ = value;
+      if (this->l1_voltage_sensor_ != nullptr) this->l1_voltage_sensor_->publish_state(value);
+    }
+    if (this->decode_float_(registers, start, this->reg_l2_voltage_, &value)) {
+      this->l2_voltage_v_ = value;
+      if (this->l2_voltage_sensor_ != nullptr) this->l2_voltage_sensor_->publish_state(value);
+    }
+    if (this->decode_float_(registers, start, this->reg_l3_voltage_, &value)) {
+      this->l3_voltage_v_ = value;
+      if (this->l3_voltage_sensor_ != nullptr) this->l3_voltage_sensor_->publish_state(value);
+    }
     if (!this->decode_float_(registers, start, this->reg_total_power_, &value)) {
       return false;
     }
@@ -105,10 +112,13 @@ bool JanitzaUmg604Component::read_live_registers_() {
     this->l3_current_a_ = value;
     if (this->l3_current_sensor_ != nullptr) this->l3_current_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l1_voltage_, &value)) return false;
+    this->l1_voltage_v_ = value;
     if (this->l1_voltage_sensor_ != nullptr) this->l1_voltage_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l2_voltage_, &value)) return false;
+    this->l2_voltage_v_ = value;
     if (this->l2_voltage_sensor_ != nullptr) this->l2_voltage_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_l3_voltage_, &value)) return false;
+    this->l3_voltage_v_ = value;
     if (this->l3_voltage_sensor_ != nullptr) this->l3_voltage_sensor_->publish_state(value);
     if (!this->read_float_register_(this->reg_total_power_, &value)) return false;
   }
