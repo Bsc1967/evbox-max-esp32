@@ -117,6 +117,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
   // This is the EVBox communication state machine. Frame identifiers are kept
   // in protocol.h; this method decides how a valid protocol frame changes the
   // controller state and which follow-up command is sent.
+  ESP_LOGD(TAG, "RX EVBox dst=0x%02X src=0x%02X cmd=0x%02X data=%s", frame.dst, frame.src, frame.cmd,
+           frame.data.c_str());
   switch (frame.type) {
     case FrameType::REGISTRATION:
       if (frame.dst != ADDR_CP || frame.data.size() < 7) {
@@ -222,6 +224,7 @@ void EvboxMaxComponent::transition_(EvboxState state) {
 
 void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
   const auto bytes = encode_frame(ADDR_CP, dst, cmd, data);
+  ESP_LOGD(TAG, "TX EVBox dst=0x%02X src=0x%02X cmd=0x%02X data=%s", dst, ADDR_CP, cmd, data.c_str());
   if (this->rs485_de_pin_ != nullptr) {
     // Enable RS485 transmit before writing and disable it after flush() has
     // drained the UART buffer, otherwise the last byte can be clipped.
