@@ -23,6 +23,9 @@ CONF_STATUS = "status"
 CONF_STATE = "state"
 CONF_EV_CURRENT = "ev_current"
 CONF_CURRENT_LIMIT = "current_limit"
+CONF_DESIRED_CURRENT = "desired_current"
+CONF_COMMANDED_CURRENT = "commanded_current"
+CONF_RETURNED_CURRENT_LIMIT = "returned_current_limit"
 CONF_L1_CURRENT = "l1_current"
 CONF_L2_CURRENT = "l2_current"
 CONF_L3_CURRENT = "l3_current"
@@ -86,6 +89,24 @@ CONFIG_SCHEMA = cv.Schema(
             state_class="measurement",
         ),
         cv.Optional(CONF_CURRENT_LIMIT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_DESIRED_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_COMMANDED_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_RETURNED_CURRENT_LIMIT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
             device_class="current",
@@ -190,6 +211,15 @@ async def to_code(config):
     if CONF_CURRENT_LIMIT in config:
         sens = await sensor.new_sensor(config[CONF_CURRENT_LIMIT])
         cg.add(var.set_current_limit_sensor(sens))
+    if CONF_DESIRED_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_DESIRED_CURRENT])
+        cg.add(var.set_desired_current_sensor(sens))
+    if CONF_COMMANDED_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_COMMANDED_CURRENT])
+        cg.add(var.set_commanded_current_sensor(sens))
+    if CONF_RETURNED_CURRENT_LIMIT in config:
+        sens = await sensor.new_sensor(config[CONF_RETURNED_CURRENT_LIMIT])
+        cg.add(var.set_returned_current_limit_sensor(sens))
     if CONF_L1_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_L1_CURRENT])
         cg.add(var.set_l1_current_sensor(sens))
