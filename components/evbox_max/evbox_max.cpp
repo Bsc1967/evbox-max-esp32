@@ -58,7 +58,7 @@ void EvboxMaxComponent::loop() {
     this->send_heartbeat_();
     if (!this->stop_requested_ &&
         (this->session_active_ || this->state_ == CHARGING || this->state_ == SESSION_STARTING ||
-         this->state_ == STARTING || this->state_ == AUTHORIZED)) {
+         this->state_ == STARTING)) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
     }
@@ -146,8 +146,7 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
   this->desired_current_ = next_current;
-  const bool charge_flow_active = this->session_active_ || this->state_ == AUTHORIZED ||
-                                  this->state_ == STARTING || this->state_ == SESSION_STARTING ||
+  const bool charge_flow_active = this->session_active_ || this->state_ == STARTING || this->state_ == SESSION_STARTING ||
                                   this->state_ == CHARGING;
   if (!this->stop_requested_ && charge_flow_active && next_current < this->active_current_) {
     // Overload response path: do not wait for the next heartbeat tick when the
@@ -298,10 +297,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
-          } else if (this->state_ == SESSION_STARTING) {
+          } else if (this->state_ == SESSION_STARTING || this->state_ == CHARGING) {
             this->transition_(SESSION_STARTING);
-          } else {
+          } else if (this->state_ == STARTING) {
             this->transition_(STARTING);
+          } else {
+            this->transition_(AUTHORIZED);
           }
         }
         else if (code == 0x48) {
