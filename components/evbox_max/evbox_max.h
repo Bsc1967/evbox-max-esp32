@@ -63,6 +63,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_state_text_sensor(text_sensor::TextSensor *sensor) { this->state_text_sensor_ = sensor; }
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
+  void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
   void set_session_energy_sensor(sensor::Sensor *sensor) { this->session_energy_sensor_ = sensor; }
   void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
@@ -121,6 +122,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
   float active_current_{0.0f};
+  bool current_limit_returned_{false};
   float session_energy_kwh_{0.0f};
   float meter_value_kwh_{0.0f};
   float session_start_meter_kwh_{0.0f};
@@ -136,6 +138,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *state_text_sensor_{nullptr};
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
+  sensor::Sensor *current_limit_sensor_{nullptr};
   sensor::Sensor *session_energy_sensor_{nullptr};
   sensor::Sensor *meter_value_sensor_{nullptr};
   sensor::Sensor *temperature_sensor_{nullptr};
