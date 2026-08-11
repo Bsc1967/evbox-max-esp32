@@ -122,15 +122,18 @@ void EvboxMaxComponent::set_pv_enabled(bool enabled) {
 
 void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
                                       float l3_current, float l1_voltage, float l2_voltage, float l3_voltage,
-                                      bool online) {
+                                      float l1_power_w, float l2_power_w, float l3_power_w, bool online) {
   // The Janitza component only provides measurements. Charging policy remains
   // in ChargeController so meter communication and control logic do not blend.
   this->inputs_.grid_import_w = import_w;
   this->inputs_.grid_export_w = export_w;
+  this->inputs_.grid_total_power_w = import_w > 0.0f ? import_w : -export_w;
   this->inputs_.l1_current = l1_current;
   this->inputs_.l2_current = l2_current;
   this->inputs_.l3_current = l3_current;
-  this->inputs_.ev_current = this->active_current_;
+  this->inputs_.l1_power_w = l1_power_w;
+  this->inputs_.l2_power_w = l2_power_w;
+  this->inputs_.l3_power_w = l3_power_w;
   this->inputs_.janitza_online = online;
   this->janitza_online_ = online;
   (void) l1_voltage;
@@ -373,7 +376,7 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
     this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
     this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
     this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
-    this->update_ev_measurements_();
+    this->update_phase_detection_();
     ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f",
              this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
              this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
@@ -405,11 +408,42 @@ void EvboxMaxComponent::update_meter_from_push_(const std::string &data) {
       }
     }
   }
-  this->update_ev_measurements_();
+  this->update_phase_detection_();
   ESP_LOGD(TAG, "CB meter push V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f kWh %.3f",
            this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
            this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
            this->ev_l3_power_factor_, this->meter_value_kwh_);
+}
+
+void EvboxMaxComponent::update_phase_detection_() {
+  uint8_t current_mask = 0;
+  if (std::fabs(this->ev_l1_current_a_) >= 0.5f) current_mask |= 0x01;
+  if (std::fabs(this->ev_l2_current_a_) >= 0.5f) current_mask |= 0x02;
+  if (std::fabs(this->ev_l3_current_a_) >= 0.5f) current_mask |= 0x04;
+
+  uint8_t voltage_mask = 0;
+  if (!std::isnan(this->ev_l1_voltage_v_) && this->ev_l1_voltage_v_ >= 180.0f) voltage_mask |= 0x01;
+  if (!std::isnan(this->ev_l2_voltage_v_) && this->ev_l2_voltage_v_ >= 180.0f) voltage_mask |= 0x02;
+  if (!std::isnan(this->ev_l3_voltage_v_) && this->ev_l3_voltage_v_ >= 180.0f) voltage_mask |= 0x04;
+
+  const uint8_t phase_mask = current_mask != 0 ? current_mask : (voltage_mask != 0 ? voltage_mask : this->evbox_active_phase_mask_);
+  this->evbox_active_phase_mask_ = phase_mask & 0x07;
+  this->evbox_detected_charge_phases_ = this->count_phases_(this->evbox_active_phase_mask_);
+  this->inputs_.active_phase_mask = this->evbox_active_phase_mask_;
+  this->inputs_.charge_phases = this->evbox_detected_charge_phases_ > 0 ? this->evbox_detected_charge_phases_ : 1;
+  this->inputs_.ev_l1_current = this->ev_l1_current_a_;
+  this->inputs_.ev_l2_current = this->ev_l2_current_a_;
+  this->inputs_.ev_l3_current = this->ev_l3_current_a_;
+  this->inputs_.ev_current = std::max(this->ev_l1_current_a_, std::max(this->ev_l2_current_a_, this->ev_l3_current_a_));
+  this->update_ev_measurements_();
+}
+
+uint8_t EvboxMaxComponent::count_phases_(uint8_t phase_mask) const {
+  uint8_t count = 0;
+  if ((phase_mask & 0x01) != 0) count++;
+  if ((phase_mask & 0x02) != 0) count++;
+  if ((phase_mask & 0x04) != 0) count++;
+  return count;
 }
 
 void EvboxMaxComponent::update_ev_measurements_() {
@@ -570,6 +604,12 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->l3_power_factor_sensor_ != nullptr && !std::isnan(this->ev_l3_power_factor_)) {
     this->l3_power_factor_sensor_->publish_state(this->ev_l3_power_factor_);
+  }
+  if (this->detected_charge_phases_sensor_ != nullptr) {
+    this->detected_charge_phases_sensor_->publish_state(this->evbox_detected_charge_phases_);
+  }
+  if (this->active_phase_mask_sensor_ != nullptr) {
+    this->active_phase_mask_sensor_->publish_state(this->evbox_active_phase_mask_);
   }
   if (this->power_sensor_ != nullptr) {
     this->power_sensor_->publish_state(this->ev_power_w_);
