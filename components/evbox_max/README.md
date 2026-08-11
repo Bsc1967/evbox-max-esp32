@@ -7,8 +7,8 @@ MAX RS485 protocol.
 
 - UART transport at 38400 8N1
 - Optional MAX3485 driver-enable pin for half-duplex RS485
-- MAX frame encoding and parsing
-- Additive two's-complement checksum
+- EVBox ASCII frame encoding and parsing
+- ASCII checksum plus XOR parity validation
 - ChargeBox G2 registration/autodetect hook
 - Address assignment hook
 - Information/configuration read flow
@@ -62,6 +62,6 @@ Home Assistant controls are isolated in:
 
 ## Validation Work Still Required
 
-The current frame identifiers and payload fields are a structured starting
-point. Validate them against a logic-analyzer capture from the original EVBox
-controller before enabling contactor control.
+The component now follows the frame format used by the local EVBox test app:
+`0x02 + ASCII payload + ASCII checksum + ASCII XOR parity + 0x03`, with an
+optional trailing `0xFE` ignored by the parser.
