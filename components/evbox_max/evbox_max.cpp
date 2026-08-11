@@ -235,6 +235,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
           if (raw_limit > 0 && raw_limit < 1000) {
             this->active_current_ = static_cast<float>(raw_limit) / 10.0f;
+            this->current_limit_returned_ = true;
+            ESP_LOGI(TAG, "CB returned active current limit %.1f A", this->active_current_);
           }
         }
         this->update_meter_from_state_(frame.data);
@@ -402,8 +404,10 @@ void EvboxMaxComponent::send_heartbeat_() {
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
   if (this->chargebox_address_ == 0) return;
   this->active_current_ = amps;
+  this->current_limit_returned_ = false;
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
   const std::string value = hex_word(tenths);
+  ESP_LOGI(TAG, "Sending current limit %.1f A to CB", static_cast<float>(tenths) / 10.0f);
   this->send_packet_(this->chargebox_address_, 0x6B, std::string("01") + hex_word(60) + value + value + value);
 }
 
@@ -432,6 +436,9 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->ev_current_sensor_ != nullptr) {
     this->ev_current_sensor_->publish_state(this->active_current_);
+  }
+  if (this->current_limit_sensor_ != nullptr) {
+    this->current_limit_sensor_->publish_state(this->active_current_);
   }
   if (this->session_energy_sensor_ != nullptr) {
     this->session_energy_sensor_->publish_state(this->session_energy_kwh_);
