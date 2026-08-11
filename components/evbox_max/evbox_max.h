@@ -22,6 +22,7 @@ enum EvboxState : uint8_t {
   IDLE,
   AUTHORIZED,
   STARTING,
+  SESSION_STARTING,
   CHARGING,
   PAUSED,
   FINISHING,

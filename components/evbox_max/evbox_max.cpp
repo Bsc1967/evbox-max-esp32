@@ -57,7 +57,8 @@ void EvboxMaxComponent::loop() {
     // recalculated locally from the selected control mode and Janitza inputs.
     this->send_heartbeat_();
     if (!this->stop_requested_ &&
-        (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED)) {
+        (this->session_active_ || this->state_ == CHARGING || this->state_ == SESSION_STARTING ||
+         this->state_ == STARTING || this->state_ == AUTHORIZED)) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
     }
@@ -146,7 +147,8 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   const float next_current = this->controller_.calculate_current(this->inputs_);
   this->desired_current_ = next_current;
   const bool charge_flow_active = this->session_active_ || this->state_ == AUTHORIZED ||
-                                  this->state_ == STARTING || this->state_ == CHARGING;
+                                  this->state_ == STARTING || this->state_ == SESSION_STARTING ||
+                                  this->state_ == CHARGING;
   if (!this->stop_requested_ && charge_flow_active && next_current < this->active_current_) {
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
@@ -217,11 +219,18 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
+        const uint8_t request_code = parse_hex_byte(frame.data, 0);
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
         const bool charge_flow_allowed = this->session_active_ || this->state_ == AUTHORIZED ||
-                                         this->state_ == STARTING || this->state_ == CHARGING;
+                                         this->state_ == STARTING || this->state_ == SESSION_STARTING ||
+                                         this->state_ == CHARGING;
         if (!this->stop_requested_ && charge_flow_allowed) {
-          if (this->state_ != CHARGING) this->transition_(STARTING);
+          if (request_code == 0x81) {
+            this->session_active_ = true;
+            this->transition_(CHARGING);
+          } else if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
+            this->transition_(STARTING);
+          }
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           this->send_current_setpoint_(this->desired_current_);
         } else {
@@ -234,6 +243,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         ESP_LOGD(TAG, "CB acknowledged current setpoint");
+        if (!this->stop_requested_ && (this->state_ == STARTING || this->state_ == AUTHORIZED)) {
+          this->transition_(SESSION_STARTING);
+        }
       }
       break;
     case FrameType::STATE_UPDATE:
@@ -264,6 +276,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
+          } else if (this->state_ == SESSION_STARTING) {
+            this->transition_(SESSION_STARTING);
           } else {
             this->transition_(STARTING);
           }
@@ -300,6 +314,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (!this->stop_requested_) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
           this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
+          this->transition_(SESSION_STARTING);
         }
         const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                  : std::string("01") + hex_dword(this->session_);
@@ -334,8 +349,9 @@ void EvboxMaxComponent::transition_(EvboxState state) {
   }
   // All state changes go through this helper so logging, future guards, and HA
   // publishing can be attached in one place.
-  ESP_LOGI(TAG, "State %s -> %u", this->state_name_(), state);
+  const char *previous_name = this->state_name_();
   this->state_ = state;
+  ESP_LOGI(TAG, "State %s -> %s", previous_name, this->state_name_());
 }
 
 void EvboxMaxComponent::load_settings_() {
@@ -384,6 +400,10 @@ void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
 void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   if (data.size() < 26) return;
 
+  if (data.size() >= 56) {
+    this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 52, 4)) / 10.0f;
+  }
+
   if (data.size() >= 132) {
     const uint32_t measurement_block = parse_hex_uint(data, 68, 8) | parse_hex_uint(data, 76, 8) |
                                        parse_hex_uint(data, 84, 8) | parse_hex_uint(data, 92, 8) |
@@ -395,14 +415,14 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
       this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
       this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 84, 4)) / 100.0f;
       this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 88, 4)) / 100.0f;
-      this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 92, 4));
       this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
       this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
       this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
-      ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f",
+      const float socket_temperature_c = static_cast<float>(parse_hex_uint(data, 92, 4));
+      ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f chassis %.1fC socket %.1fC PF %.3f/%.3f/%.3f",
                this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
-               this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
-               this->ev_l3_power_factor_);
+               this->ev_l2_current_a_, this->ev_l3_current_a_, this->temperature_c_, socket_temperature_c,
+               this->ev_l1_power_factor_, this->ev_l2_power_factor_, this->ev_l3_power_factor_);
     } else {
       ESP_LOGD(TAG, "CB cmd26 extended meter block is zero; keeping configured phase mask 0x%02X",
                this->evbox_active_phase_mask_);
@@ -508,7 +528,8 @@ void EvboxMaxComponent::setup_output_pin_(GPIOPin *pin) {
 
 void EvboxMaxComponent::update_relays_() {
   const bool charging_active = !this->stop_requested_ &&
-                               (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING);
+                               (this->session_active_ || this->state_ == CHARGING ||
+                                this->state_ == SESSION_STARTING || this->state_ == STARTING);
   const bool failsafe = !this->janitza_online_ &&
                         (this->controller_.mode() == CHARGING_MODE_LOAD_BALANCING ||
                          this->controller_.mode() == CHARGING_MODE_PV_SURPLUS);
@@ -753,6 +774,7 @@ const char *EvboxMaxComponent::state_name_() const {
     case IDLE: return "IDLE";
     case AUTHORIZED: return "AUTHORIZED";
     case STARTING: return "STARTING";
+    case SESSION_STARTING: return "SESSION_STARTING";
     case CHARGING: return "CHARGING";
     case PAUSED: return "PAUSED";
     case FINISHING: return "FINISHING";
