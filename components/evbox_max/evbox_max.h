@@ -66,9 +66,13 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
  protected:
   void handle_frame_(const Frame &frame);
   void transition_(EvboxState state);
-  void send_frame_(FrameType type, const std::vector<uint8_t> &payload = {});
+  void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
+  void send_restart_registration_();
+  void send_connection_state_();
+  void send_status_update_request_();
   void send_heartbeat_();
   void send_current_setpoint_(float amps);
+  uint32_t seconds_since_2000_() const;
   void watchdog_();
   void publish_();
 
@@ -80,6 +84,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   ControlInputs inputs_{};
   EvboxState state_{BOOT};
   uint8_t chargebox_address_{0x00};
+  std::string chargebox_serial_{};
+  uint16_t chargebox_firmware_{0};
+  uint32_t session_{1};
   bool evbox_online_{false};
   bool session_active_{false};
   float active_current_{0.0f};
