@@ -115,7 +115,8 @@ void EvboxMaxComponent::set_pv_enabled(bool enabled) {
 }
 
 void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
-                                      float l3_current, bool online) {
+                                      float l3_current, float l1_voltage, float l2_voltage, float l3_voltage,
+                                      bool online) {
   // The Janitza component only provides measurements. Charging policy remains
   // in ChargeController so meter communication and control logic do not blend.
   this->inputs_.grid_import_w = import_w;
@@ -125,6 +126,12 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   this->inputs_.l3_current = l3_current;
   this->inputs_.ev_current = this->active_current_;
   this->inputs_.janitza_online = online;
+  if (online) {
+    this->ev_l1_voltage_v_ = l1_voltage;
+    this->ev_l2_voltage_v_ = l2_voltage;
+    this->ev_l3_voltage_v_ = l3_voltage;
+  }
+  this->update_ev_measurements_();
 
   const float next_current = this->controller_.calculate_current(this->inputs_);
   if (next_current < this->active_current_) {
@@ -236,6 +243,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (raw_limit > 0 && raw_limit < 1000) {
             this->active_current_ = static_cast<float>(raw_limit) / 10.0f;
             this->current_limit_returned_ = true;
+            this->update_ev_measurements_();
             ESP_LOGI(TAG, "CB returned active current limit %.1f A", this->active_current_);
           }
         }
@@ -347,6 +355,21 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   ESP_LOGD(TAG, "CB meter %.3f kWh session %.3f kWh", this->meter_value_kwh_, this->session_energy_kwh_);
 }
 
+void EvboxMaxComponent::update_ev_measurements_() {
+  const bool active = this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED;
+  const float amps = active ? this->active_current_ : 0.0f;
+  const uint8_t mask = this->inputs_.active_phase_mask;
+
+  this->ev_l1_current_a_ = (mask & 0x01) != 0 ? amps : 0.0f;
+  this->ev_l2_current_a_ = (mask & 0x02) != 0 ? amps : 0.0f;
+  this->ev_l3_current_a_ = (mask & 0x04) != 0 ? amps : 0.0f;
+
+  const float v1 = std::isnan(this->ev_l1_voltage_v_) ? 230.0f : this->ev_l1_voltage_v_;
+  const float v2 = std::isnan(this->ev_l2_voltage_v_) ? 230.0f : this->ev_l2_voltage_v_;
+  const float v3 = std::isnan(this->ev_l3_voltage_v_) ? 230.0f : this->ev_l3_voltage_v_;
+  this->ev_power_w_ = this->ev_l1_current_a_ * v1 + this->ev_l2_current_a_ * v2 + this->ev_l3_current_a_ * v3;
+}
+
 void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
   const auto bytes = encode_frame(ADDR_CP, dst, cmd, data);
   ESP_LOGD(TAG, "TX EVBox dst=0x%02X src=0x%02X cmd=0x%02X data=%s", dst, ADDR_CP, cmd, data.c_str());
@@ -405,6 +428,7 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   if (this->chargebox_address_ == 0) return;
   this->active_current_ = amps;
   this->current_limit_returned_ = false;
+  this->update_ev_measurements_();
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
   const std::string value = hex_word(tenths);
   ESP_LOGI(TAG, "Sending current limit %.1f A to CB", static_cast<float>(tenths) / 10.0f);
@@ -439,6 +463,27 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->current_limit_sensor_ != nullptr) {
     this->current_limit_sensor_->publish_state(this->active_current_);
+  }
+  if (this->l1_current_sensor_ != nullptr) {
+    this->l1_current_sensor_->publish_state(this->ev_l1_current_a_);
+  }
+  if (this->l2_current_sensor_ != nullptr) {
+    this->l2_current_sensor_->publish_state(this->ev_l2_current_a_);
+  }
+  if (this->l3_current_sensor_ != nullptr) {
+    this->l3_current_sensor_->publish_state(this->ev_l3_current_a_);
+  }
+  if (this->l1_voltage_sensor_ != nullptr && !std::isnan(this->ev_l1_voltage_v_)) {
+    this->l1_voltage_sensor_->publish_state(this->ev_l1_voltage_v_);
+  }
+  if (this->l2_voltage_sensor_ != nullptr && !std::isnan(this->ev_l2_voltage_v_)) {
+    this->l2_voltage_sensor_->publish_state(this->ev_l2_voltage_v_);
+  }
+  if (this->l3_voltage_sensor_ != nullptr && !std::isnan(this->ev_l3_voltage_v_)) {
+    this->l3_voltage_sensor_->publish_state(this->ev_l3_voltage_v_);
+  }
+  if (this->power_sensor_ != nullptr) {
+    this->power_sensor_->publish_state(this->ev_power_w_);
   }
   if (this->session_energy_sensor_ != nullptr) {
     this->session_energy_sensor_->publish_state(this->session_energy_kwh_);
