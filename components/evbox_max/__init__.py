@@ -22,6 +22,7 @@ CONF_ENABLE_PV_MODE = "enable_pv_mode"
 CONF_STATUS = "status"
 CONF_STATE = "state"
 CONF_EV_CURRENT = "ev_current"
+CONF_CURRENT_LIMIT = "current_limit"
 CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
 CONF_COMMUNICATION_STATUS = "communication_status"
@@ -72,6 +73,12 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_STATE): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_EV_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CURRENT_LIMIT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
             device_class="current",
@@ -131,6 +138,9 @@ async def to_code(config):
     if CONF_EV_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_EV_CURRENT])
         cg.add(var.set_ev_current_sensor(sens))
+    if CONF_CURRENT_LIMIT in config:
+        sens = await sensor.new_sensor(config[CONF_CURRENT_LIMIT])
+        cg.add(var.set_current_limit_sensor(sens))
     if CONF_SESSION_ENERGY in config:
         sens = await sensor.new_sensor(config[CONF_SESSION_ENERGY])
         cg.add(var.set_session_energy_sensor(sens))
