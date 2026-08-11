@@ -15,6 +15,9 @@ CONF_L1_VOLTAGE = "l1_voltage"
 CONF_L2_VOLTAGE = "l2_voltage"
 CONF_L3_VOLTAGE = "l3_voltage"
 CONF_TOTAL_POWER = "total_power"
+CONF_L1_POWER = "l1_power"
+CONF_L2_POWER = "l2_power"
+CONF_L3_POWER = "l3_power"
 CONF_IMPORT_POWER = "import_power"
 CONF_EXPORT_POWER = "export_power"
 CONF_COMMUNICATION_STATUS = "communication_status"
@@ -43,6 +46,9 @@ CONFIG_SCHEMA = cv.Schema(
                 cv.Optional(CONF_L1_VOLTAGE, default=1317): cv.positive_int,
                 cv.Optional(CONF_L2_VOLTAGE, default=1319): cv.positive_int,
                 cv.Optional(CONF_L3_VOLTAGE, default=1321): cv.positive_int,
+                cv.Optional(CONF_L1_POWER, default=1333): cv.positive_int,
+                cv.Optional(CONF_L2_POWER, default=1335): cv.positive_int,
+                cv.Optional(CONF_L3_POWER, default=1337): cv.positive_int,
                 cv.Optional(CONF_TOTAL_POWER, default=1369): cv.positive_int,
                 cv.Optional(CONF_IMPORT_POWER, default=1369): cv.positive_int,
                 cv.Optional(CONF_EXPORT_POWER, default=1369): cv.positive_int,
@@ -90,6 +96,24 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="power",
             state_class="measurement",
         ),
+        cv.Optional(CONF_L1_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
         cv.Optional(CONF_IMPORT_POWER): sensor.sensor_schema(
             unit_of_measurement="W",
             accuracy_decimals=0,
@@ -130,6 +154,9 @@ async def to_code(config):
     cg.add(var.set_register_l1_voltage(registers[CONF_L1_VOLTAGE]))
     cg.add(var.set_register_l2_voltage(registers[CONF_L2_VOLTAGE]))
     cg.add(var.set_register_l3_voltage(registers[CONF_L3_VOLTAGE]))
+    cg.add(var.set_register_l1_power(registers[CONF_L1_POWER]))
+    cg.add(var.set_register_l2_power(registers[CONF_L2_POWER]))
+    cg.add(var.set_register_l3_power(registers[CONF_L3_POWER]))
     cg.add(var.set_register_total_power(registers[CONF_TOTAL_POWER]))
     cg.add(var.set_register_import_power(registers[CONF_IMPORT_POWER]))
     cg.add(var.set_register_export_power(registers[CONF_EXPORT_POWER]))
@@ -141,6 +168,9 @@ async def to_code(config):
         (CONF_L1_VOLTAGE, var.set_l1_voltage_sensor),
         (CONF_L2_VOLTAGE, var.set_l2_voltage_sensor),
         (CONF_L3_VOLTAGE, var.set_l3_voltage_sensor),
+        (CONF_L1_POWER, var.set_l1_power_sensor),
+        (CONF_L2_POWER, var.set_l2_power_sensor),
+        (CONF_L3_POWER, var.set_l3_power_sensor),
         (CONF_TOTAL_POWER, var.set_total_power_sensor),
         (CONF_IMPORT_POWER, var.set_import_power_sensor),
         (CONF_EXPORT_POWER, var.set_export_power_sensor),
