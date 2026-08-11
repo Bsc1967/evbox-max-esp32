@@ -30,6 +30,7 @@ enum EvboxSwitchType : uint8_t {
 
 class EvboxCurrentNumber : public number::Number, public Component {
  public:
+  void setup() override;
   void set_parent(EvboxMaxComponent *parent) { this->parent_ = parent; }
   void set_type(EvboxNumberType type) { this->type_ = type; }
 
@@ -42,6 +43,7 @@ class EvboxCurrentNumber : public number::Number, public Component {
 
 class EvboxModeSelect : public select::Select, public Component {
  public:
+  void setup() override;
   void set_parent(EvboxMaxComponent *parent) { this->parent_ = parent; }
   void set_type(EvboxSelectType type) { this->type_ = type; }
 
@@ -54,6 +56,7 @@ class EvboxModeSelect : public select::Select, public Component {
 
 class EvboxCommandSwitch : public switch_::Switch, public Component {
  public:
+  void setup() override;
   void set_parent(EvboxMaxComponent *parent) { this->parent_ = parent; }
   void set_type(EvboxSwitchType type) { this->type_ = type; }
 
