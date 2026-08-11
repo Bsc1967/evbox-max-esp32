@@ -68,6 +68,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
   void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
+  void set_desired_current_sensor(sensor::Sensor *sensor) { this->desired_current_sensor_ = sensor; }
+  void set_commanded_current_sensor(sensor::Sensor *sensor) { this->commanded_current_sensor_ = sensor; }
+  void set_returned_current_limit_sensor(sensor::Sensor *sensor) { this->returned_current_limit_sensor_ = sensor; }
   void set_l1_current_sensor(sensor::Sensor *sensor) { this->l1_current_sensor_ = sensor; }
   void set_l2_current_sensor(sensor::Sensor *sensor) { this->l2_current_sensor_ = sensor; }
   void set_l3_current_sensor(sensor::Sensor *sensor) { this->l3_current_sensor_ = sensor; }
@@ -135,6 +138,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
   float active_current_{0.0f};
+  float desired_current_{0.0f};
+  float commanded_current_{0.0f};
+  float returned_current_limit_{NAN};
   bool current_limit_returned_{false};
   float ev_l1_current_a_{0.0f};
   float ev_l2_current_a_{0.0f};
@@ -159,6 +165,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
   sensor::Sensor *current_limit_sensor_{nullptr};
+  sensor::Sensor *desired_current_sensor_{nullptr};
+  sensor::Sensor *commanded_current_sensor_{nullptr};
+  sensor::Sensor *returned_current_limit_sensor_{nullptr};
   sensor::Sensor *l1_current_sensor_{nullptr};
   sensor::Sensor *l2_current_sensor_{nullptr};
   sensor::Sensor *l3_current_sensor_{nullptr};
