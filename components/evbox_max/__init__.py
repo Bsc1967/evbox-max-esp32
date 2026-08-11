@@ -32,6 +32,9 @@ CONF_L3_CURRENT = "l3_current"
 CONF_L1_VOLTAGE = "l1_voltage"
 CONF_L2_VOLTAGE = "l2_voltage"
 CONF_L3_VOLTAGE = "l3_voltage"
+CONF_L1_POWER_FACTOR = "l1_power_factor"
+CONF_L2_POWER_FACTOR = "l2_power_factor"
+CONF_L3_POWER_FACTOR = "l3_power_factor"
 CONF_POWER = "power"
 CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
@@ -40,6 +43,10 @@ CONF_RS485_DE_PIN = "rs485_de_pin"
 CONF_CHARGE_PHASES = "charge_phases"
 CONF_CHARGER_BREAKER_CURRENT = "charger_breaker_current"
 CONF_MAIN_FUSE_CURRENT = "main_fuse_current"
+CONF_RELAY_EVBOX_KNOWN_PIN = "relay_evbox_known_pin"
+CONF_RELAY_JANITZA_OK_PIN = "relay_janitza_ok_pin"
+CONF_RELAY_CHARGING_ACTIVE_PIN = "relay_charging_active_pin"
+CONF_RELAY_FAILSAFE_PIN = "relay_failsafe_pin"
 
 evbox_max_ns = cg.esphome_ns.namespace("evbox_max")
 
@@ -79,6 +86,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_HEARTBEAT_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_WATCHDOG_TIMEOUT, default="30s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_RS485_DE_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_RELAY_EVBOX_KNOWN_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_RELAY_JANITZA_OK_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_RELAY_CHARGING_ACTIVE_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_RELAY_FAILSAFE_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_STATE): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
@@ -148,6 +159,18 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="voltage",
             state_class="measurement",
         ),
+        cv.Optional(CONF_L1_POWER_FACTOR): sensor.sensor_schema(
+            accuracy_decimals=3,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_POWER_FACTOR): sensor.sensor_schema(
+            accuracy_decimals=3,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_POWER_FACTOR): sensor.sensor_schema(
+            accuracy_decimals=3,
+            state_class="measurement",
+        ),
         cv.Optional(CONF_POWER): sensor.sensor_schema(
             unit_of_measurement="W",
             accuracy_decimals=0,
@@ -195,6 +218,18 @@ async def to_code(config):
     if CONF_RS485_DE_PIN in config:
         pin = await cg.gpio_pin_expression(config[CONF_RS485_DE_PIN])
         cg.add(var.set_rs485_de_pin(pin))
+    if CONF_RELAY_EVBOX_KNOWN_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_RELAY_EVBOX_KNOWN_PIN])
+        cg.add(var.set_relay_evbox_known_pin(pin))
+    if CONF_RELAY_JANITZA_OK_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_RELAY_JANITZA_OK_PIN])
+        cg.add(var.set_relay_janitza_ok_pin(pin))
+    if CONF_RELAY_CHARGING_ACTIVE_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_RELAY_CHARGING_ACTIVE_PIN])
+        cg.add(var.set_relay_charging_active_pin(pin))
+    if CONF_RELAY_FAILSAFE_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_RELAY_FAILSAFE_PIN])
+        cg.add(var.set_relay_failsafe_pin(pin))
 
     if CONF_STATUS in config:
         sens = await text_sensor.new_text_sensor(config[CONF_STATUS])
@@ -238,6 +273,15 @@ async def to_code(config):
     if CONF_L3_VOLTAGE in config:
         sens = await sensor.new_sensor(config[CONF_L3_VOLTAGE])
         cg.add(var.set_l3_voltage_sensor(sens))
+    if CONF_L1_POWER_FACTOR in config:
+        sens = await sensor.new_sensor(config[CONF_L1_POWER_FACTOR])
+        cg.add(var.set_l1_power_factor_sensor(sens))
+    if CONF_L2_POWER_FACTOR in config:
+        sens = await sensor.new_sensor(config[CONF_L2_POWER_FACTOR])
+        cg.add(var.set_l2_power_factor_sensor(sens))
+    if CONF_L3_POWER_FACTOR in config:
+        sens = await sensor.new_sensor(config[CONF_L3_POWER_FACTOR])
+        cg.add(var.set_l3_power_factor_sensor(sens))
     if CONF_POWER in config:
         sens = await sensor.new_sensor(config[CONF_POWER])
         cg.add(var.set_power_sensor(sens))
