@@ -1,10 +1,15 @@
 #include "evbox_max.h"
 #include "esphome/core/log.h"
+#include <algorithm>
+#include <cstdlib>
 
 namespace esphome {
 namespace evbox_max {
 
 static const char *const TAG = "evbox_max";
+static constexpr uint8_t ADDR_CP = 0x80;
+static constexpr uint8_t ADDR_BROADCAST = 0xBC;
+static constexpr uint16_t ACK = 0xAA00;
 
 void EvboxMaxComponent::setup() {
   if (this->rs485_de_pin_ != nullptr) {
@@ -16,6 +21,7 @@ void EvboxMaxComponent::setup() {
   this->transition_(WAIT_REGISTRATION);
   this->last_rx_ms_ = millis();
   this->last_heartbeat_ms_ = millis();
+  this->send_restart_registration_();
 }
 
 void EvboxMaxComponent::loop() {
@@ -34,11 +40,16 @@ void EvboxMaxComponent::loop() {
   }
 
   const uint32_t now = millis();
-  if (now - this->last_heartbeat_ms_ >= this->heartbeat_interval_ms_) {
+  if (this->chargebox_address_ == 0 && now - this->last_heartbeat_ms_ >= this->heartbeat_interval_ms_) {
+    this->send_restart_registration_();
+    this->last_heartbeat_ms_ = now;
+  } else if (this->chargebox_address_ != 0 && now - this->last_heartbeat_ms_ >= this->heartbeat_interval_ms_) {
     // TX path: heartbeat proves the controller is alive; current setpoint is
     // recalculated locally from the selected control mode and Janitza inputs.
     this->send_heartbeat_();
-    this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
+    if (this->session_active_ || this->state_ == CHARGING || this->state_ == STARTING || this->state_ == AUTHORIZED) {
+      this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
+    }
     this->last_heartbeat_ms_ = now;
   }
 
@@ -108,34 +119,86 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
   // controller state and which follow-up command is sent.
   switch (frame.type) {
     case FrameType::REGISTRATION:
-      // First contact from the ChargeBox. If it has no address yet, assign the
-      // first local address and immediately continue with information probing.
-      this->chargebox_address_ = frame.address == 0 ? 1 : frame.address;
+      if (frame.dst != ADDR_CP || frame.data.size() < 7) {
+        ESP_LOGD(TAG, "Ignoring registration-like frame dst=0x%02X data_len=%u", frame.dst,
+                 static_cast<unsigned>(frame.data.size()));
+        break;
+      }
+      this->chargebox_serial_ = frame.data.substr(0, 7);
+      if (frame.data.size() >= 11) {
+        this->chargebox_firmware_ = static_cast<uint16_t>(std::strtoul(frame.data.substr(7, 4).c_str(), nullptr, 10));
+      }
+      this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
+      ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u", this->chargebox_serial_.c_str(),
+               this->chargebox_address_, this->chargebox_firmware_);
       this->transition_(ASSIGN_ADDRESS);
-      this->send_frame_(FrameType::ADDRESS_ASSIGNMENT, {this->chargebox_address_});
+      this->send_packet_(ADDR_BROADCAST, 0x11, this->chargebox_serial_ + hex_byte(this->chargebox_address_) + "03");
       this->transition_(READ_INFO);
-      this->send_frame_(FrameType::INFO_REQUEST);
+      this->send_connection_state_();
+      this->send_packet_(this->chargebox_address_, 0x13, "");
+      this->send_status_update_request_();
       break;
     case FrameType::INFO_RESPONSE:
       // Hardware/model data has been read. Next step is configuration so the
       // controller knows what limits and capabilities the ChargeBox reports.
       this->transition_(READ_CONFIG);
-      this->send_frame_(FrameType::CONFIG_REQUEST);
+      this->send_packet_(this->chargebox_address_, 0x33, "");
       break;
     case FrameType::CONFIG_RESPONSE:
       // Registration and startup reads are done; the controller may now wait
       // for local authorisation/start commands.
       this->transition_(IDLE);
       break;
-    case FrameType::SESSION_STATUS:
-      if (!frame.payload.empty()) {
-        this->active_current_ = static_cast<float>(frame.payload[0]) / 10.0f;
+    case FrameType::CURRENT_REQUEST:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->chargebox_address_ = frame.src;
+        this->evbox_online_ = true;
+        this->send_packet_(frame.src, 0x6A, hex_word(ACK));
+        if (!this->session_active_) this->session_active_ = true;
+        if (this->state_ != CHARGING) this->transition_(STARTING);
+        this->send_current_setpoint_(this->controller_.calculate_current(this->inputs_));
       }
-      // When a local session is active and the ChargeBox reports current, move
-      // to CHARGING. More detailed pilot/contact states can be added here once
-      // real G2 traces define the payload fields precisely.
-      if (this->session_active_ && this->active_current_ > 0.0f) {
-        this->transition_(CHARGING);
+      break;
+    case FrameType::STATE_UPDATE:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->chargebox_address_ = frame.src;
+        this->evbox_online_ = true;
+        const uint8_t code = parse_hex_byte(frame.data, 0);
+        ESP_LOGI(TAG, "CB state cmd26 status=0x%02X data_len=%u", code, static_cast<unsigned>(frame.data.size()));
+        if (code == 0x02) this->transition_(IDLE);
+        else if (code == 0x17) this->transition_(AUTHORIZED);
+        else if (code == 0x47 || code == 0x4A) this->transition_(STARTING);
+        else if (code == 0x48) this->transition_(CHARGING);
+        else if (code == 0x4B) this->transition_(FINISHING);
+        else if (code == 0x0A) this->transition_(FAULT);
+        if (frame.data.size() >= 128) {
+          const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
+          if (raw_limit > 0 && raw_limit < 1000) {
+            this->active_current_ = static_cast<float>(raw_limit) / 10.0f;
+          }
+        }
+        const std::string ack_data = this->chargebox_firmware_ > 100 ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
+                                                                     : hex_dword(this->session_);
+        this->send_packet_(frame.src, 0x26, ack_data);
+      }
+      break;
+    case FrameType::METERING_START:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->session_active_ = true;
+        const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
+                                                                 : std::string("01") + hex_dword(this->session_);
+        this->send_packet_(frame.src, 0x23, data);
+      }
+      break;
+    case FrameType::METERING_END:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->session_active_ = false;
+        this->send_packet_(frame.src, 0x24, "01");
+      }
+      break;
+    case FrameType::METER_PUSH:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->send_packet_(frame.src, 0x66, "");
       }
       break;
     case FrameType::FAULT:
@@ -157,8 +220,8 @@ void EvboxMaxComponent::transition_(EvboxState state) {
   this->state_ = state;
 }
 
-void EvboxMaxComponent::send_frame_(FrameType type, const std::vector<uint8_t> &payload) {
-  const auto bytes = encode_frame(Frame{this->chargebox_address_, type, payload});
+void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
+  const auto bytes = encode_frame(ADDR_CP, dst, cmd, data);
   if (this->rs485_de_pin_ != nullptr) {
     // Enable RS485 transmit before writing and disable it after flush() has
     // drained the UART buffer, otherwise the last byte can be clipped.
@@ -171,19 +234,36 @@ void EvboxMaxComponent::send_frame_(FrameType type, const std::vector<uint8_t> &
   }
 }
 
+void EvboxMaxComponent::send_restart_registration_() {
+  ESP_LOGI(TAG, "Requesting EVBox registration restart");
+  this->send_packet_(ADDR_BROADCAST, 0x1E, "");
+}
+
+void EvboxMaxComponent::send_connection_state_() {
+  if (this->chargebox_address_ == 0) return;
+  this->send_packet_(this->chargebox_address_, 0x1B, "0000038400");
+}
+
+void EvboxMaxComponent::send_status_update_request_() {
+  if (this->chargebox_address_ == 0) return;
+  this->send_packet_(this->chargebox_address_, 0x18, "02");
+}
+
 void EvboxMaxComponent::send_heartbeat_() {
-  this->send_frame_(FrameType::HEARTBEAT, {static_cast<uint8_t>(this->session_active_ ? 1 : 0)});
+  if (this->chargebox_address_ == 0) return;
+  this->send_status_update_request_();
 }
 
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
+  if (this->chargebox_address_ == 0) return;
   this->active_current_ = amps;
-  // Payload is currently encoded as tenths of an ampere. Validate the exact
-  // field size/order against captured EVBox MAX traffic before live charging.
-  const auto tenths = static_cast<uint16_t>(amps * 10.0f);
-  this->send_frame_(FrameType::CURRENT_SETPOINT, {
-    static_cast<uint8_t>((tenths >> 8) & 0xFF),
-    static_cast<uint8_t>(tenths & 0xFF),
-  });
+  const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
+  const std::string value = hex_word(tenths);
+  this->send_packet_(this->chargebox_address_, 0x6B, std::string("01") + hex_word(60) + value + value + value);
+}
+
+uint32_t EvboxMaxComponent::seconds_since_2000_() const {
+  return millis() / 1000UL + 840000000UL;
 }
 
 void EvboxMaxComponent::watchdog_() {
