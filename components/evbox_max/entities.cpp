@@ -3,6 +3,28 @@
 namespace esphome {
 namespace evbox_max {
 
+void EvboxCurrentNumber::setup() {
+  if (this->parent_ == nullptr) return;
+
+  switch (this->type_) {
+    case EVBOX_NUMBER_MANUAL_CURRENT:
+      this->publish_state(this->parent_->get_manual_current());
+      break;
+    case EVBOX_NUMBER_MAX_CURRENT:
+      this->publish_state(this->parent_->get_max_current());
+      break;
+    case EVBOX_NUMBER_FAILSAFE_CURRENT:
+      this->publish_state(this->parent_->get_failsafe_current());
+      break;
+    case EVBOX_NUMBER_CHARGER_BREAKER_CURRENT:
+      this->publish_state(this->parent_->get_charger_breaker_current());
+      break;
+    case EVBOX_NUMBER_MAIN_FUSE_CURRENT:
+      this->publish_state(this->parent_->get_main_fuse_current());
+      break;
+  }
+}
+
 void EvboxCurrentNumber::control(float value) {
   if (this->parent_ == nullptr) {
     return;
@@ -28,6 +50,29 @@ void EvboxCurrentNumber::control(float value) {
   this->publish_state(value);
 }
 
+void EvboxModeSelect::setup() {
+  if (this->parent_ == nullptr) return;
+
+  if (this->type_ == EVBOX_SELECT_MODE) {
+    switch (this->parent_->get_mode()) {
+      case CHARGING_MODE_MANUAL:
+        this->publish_state("MANUAL");
+        break;
+      case CHARGING_MODE_LOAD_BALANCING:
+        this->publish_state("LOAD_BALANCING");
+        break;
+      case CHARGING_MODE_PV_SURPLUS:
+        this->publish_state("PV_SURPLUS");
+        break;
+      case CHARGING_MODE_DISABLED:
+        this->publish_state("DISABLED");
+        break;
+    }
+  } else {
+    this->publish_state(this->parent_->get_failsafe_mode() == FAILSAFE_MODE_STOP ? "STOP" : "LIMIT_6A");
+  }
+}
+
 void EvboxModeSelect::control(const std::string &value) {
   if (this->parent_ == nullptr) {
     return;
@@ -43,6 +88,15 @@ void EvboxModeSelect::control(const std::string &value) {
     if (value == "LIMIT_6A") this->parent_->set_failsafe_mode(FAILSAFE_MODE_LIMIT_6A);
   }
   this->publish_state(value);
+}
+
+void EvboxCommandSwitch::setup() {
+  if (this->parent_ == nullptr) return;
+  if (this->type_ == EVBOX_SWITCH_ENABLE_PV_MODE) {
+    this->publish_state(this->parent_->get_pv_enabled());
+  } else {
+    this->publish_state(false);
+  }
 }
 
 void EvboxCommandSwitch::write_state(bool state) {
