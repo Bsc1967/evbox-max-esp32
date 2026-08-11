@@ -53,10 +53,14 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
     const uint8_t clamped = phases < 1 ? 1 : (phases > 3 ? 3 : phases);
     this->inputs_.charge_phases = clamped;
     this->inputs_.active_phase_mask = clamped == 1 ? 0x01 : (clamped == 2 ? 0x03 : 0x07);
+    this->evbox_detected_charge_phases_ = clamped;
+    this->evbox_active_phase_mask_ = this->inputs_.active_phase_mask;
     this->update_ev_measurements_();
   }
   void set_active_phase_mask(uint8_t mask) {
     this->inputs_.active_phase_mask = mask & 0x07;
+    this->evbox_active_phase_mask_ = this->inputs_.active_phase_mask;
+    this->evbox_detected_charge_phases_ = this->count_phases_(this->inputs_.active_phase_mask);
     this->update_ev_measurements_();
   }
   void set_heartbeat_interval(uint32_t interval) { this->heartbeat_interval_ms_ = interval; }
@@ -84,13 +88,16 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_l1_power_factor_sensor(sensor::Sensor *sensor) { this->l1_power_factor_sensor_ = sensor; }
   void set_l2_power_factor_sensor(sensor::Sensor *sensor) { this->l2_power_factor_sensor_ = sensor; }
   void set_l3_power_factor_sensor(sensor::Sensor *sensor) { this->l3_power_factor_sensor_ = sensor; }
+  void set_detected_charge_phases_sensor(sensor::Sensor *sensor) { this->detected_charge_phases_sensor_ = sensor; }
+  void set_active_phase_mask_sensor(sensor::Sensor *sensor) { this->active_phase_mask_sensor_ = sensor; }
   void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   void set_session_energy_sensor(sensor::Sensor *sensor) { this->session_energy_sensor_ = sensor; }
   void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
 
   void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current,
-                      float l1_voltage, float l2_voltage, float l3_voltage, bool online);
+                      float l1_voltage, float l2_voltage, float l3_voltage, float l1_power_w, float l2_power_w,
+                      float l3_power_w, bool online);
   void set_pv_enabled(bool enabled);
   void start_session();
   void stop_session();
@@ -117,6 +124,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void apply_settings_(const StoredSettings &settings);
   void update_meter_from_state_(const std::string &data);
   void update_meter_from_push_(const std::string &data);
+  void update_phase_detection_();
+  uint8_t count_phases_(uint8_t phase_mask) const;
   void update_ev_measurements_();
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
@@ -162,6 +171,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   float ev_l2_power_factor_{NAN};
   float ev_l3_power_factor_{NAN};
   float ev_power_w_{0.0f};
+  uint8_t evbox_detected_charge_phases_{3};
+  uint8_t evbox_active_phase_mask_{0x07};
   float session_energy_kwh_{0.0f};
   float meter_value_kwh_{0.0f};
   float session_start_meter_kwh_{0.0f};
@@ -191,6 +202,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *l1_power_factor_sensor_{nullptr};
   sensor::Sensor *l2_power_factor_sensor_{nullptr};
   sensor::Sensor *l3_power_factor_sensor_{nullptr};
+  sensor::Sensor *detected_charge_phases_sensor_{nullptr};
+  sensor::Sensor *active_phase_mask_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *session_energy_sensor_{nullptr};
   sensor::Sensor *meter_value_sensor_{nullptr};
