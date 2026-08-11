@@ -35,6 +35,8 @@ CONF_L3_VOLTAGE = "l3_voltage"
 CONF_L1_POWER_FACTOR = "l1_power_factor"
 CONF_L2_POWER_FACTOR = "l2_power_factor"
 CONF_L3_POWER_FACTOR = "l3_power_factor"
+CONF_DETECTED_CHARGE_PHASES = "detected_charge_phases"
+CONF_ACTIVE_PHASE_MASK = "active_phase_mask"
 CONF_POWER = "power"
 CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
@@ -171,6 +173,14 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=3,
             state_class="measurement",
         ),
+        cv.Optional(CONF_DETECTED_CHARGE_PHASES): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_ACTIVE_PHASE_MASK): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
         cv.Optional(CONF_POWER): sensor.sensor_schema(
             unit_of_measurement="W",
             accuracy_decimals=0,
@@ -282,6 +292,12 @@ async def to_code(config):
     if CONF_L3_POWER_FACTOR in config:
         sens = await sensor.new_sensor(config[CONF_L3_POWER_FACTOR])
         cg.add(var.set_l3_power_factor_sensor(sens))
+    if CONF_DETECTED_CHARGE_PHASES in config:
+        sens = await sensor.new_sensor(config[CONF_DETECTED_CHARGE_PHASES])
+        cg.add(var.set_detected_charge_phases_sensor(sens))
+    if CONF_ACTIVE_PHASE_MASK in config:
+        sens = await sensor.new_sensor(config[CONF_ACTIVE_PHASE_MASK])
+        cg.add(var.set_active_phase_mask_sensor(sens))
     if CONF_POWER in config:
         sens = await sensor.new_sensor(config[CONF_POWER])
         cg.add(var.set_power_sensor(sens))
