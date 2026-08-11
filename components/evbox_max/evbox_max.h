@@ -62,6 +62,10 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_heartbeat_interval(uint32_t interval) { this->heartbeat_interval_ms_ = interval; }
   void set_watchdog_timeout(uint32_t timeout) { this->watchdog_timeout_ms_ = timeout; }
   void set_rs485_de_pin(GPIOPin *pin) { this->rs485_de_pin_ = pin; }
+  void set_relay_evbox_known_pin(GPIOPin *pin) { this->relay_evbox_known_pin_ = pin; }
+  void set_relay_janitza_ok_pin(GPIOPin *pin) { this->relay_janitza_ok_pin_ = pin; }
+  void set_relay_charging_active_pin(GPIOPin *pin) { this->relay_charging_active_pin_ = pin; }
+  void set_relay_failsafe_pin(GPIOPin *pin) { this->relay_failsafe_pin_ = pin; }
 
   void set_status_text_sensor(text_sensor::TextSensor *sensor) { this->status_text_sensor_ = sensor; }
   void set_state_text_sensor(text_sensor::TextSensor *sensor) { this->state_text_sensor_ = sensor; }
@@ -77,6 +81,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_l1_voltage_sensor(sensor::Sensor *sensor) { this->l1_voltage_sensor_ = sensor; }
   void set_l2_voltage_sensor(sensor::Sensor *sensor) { this->l2_voltage_sensor_ = sensor; }
   void set_l3_voltage_sensor(sensor::Sensor *sensor) { this->l3_voltage_sensor_ = sensor; }
+  void set_l1_power_factor_sensor(sensor::Sensor *sensor) { this->l1_power_factor_sensor_ = sensor; }
+  void set_l2_power_factor_sensor(sensor::Sensor *sensor) { this->l2_power_factor_sensor_ = sensor; }
+  void set_l3_power_factor_sensor(sensor::Sensor *sensor) { this->l3_power_factor_sensor_ = sensor; }
   void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   void set_session_energy_sensor(sensor::Sensor *sensor) { this->session_energy_sensor_ = sensor; }
   void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
@@ -109,7 +116,10 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   StoredSettings current_settings_() const;
   void apply_settings_(const StoredSettings &settings);
   void update_meter_from_state_(const std::string &data);
+  void update_meter_from_push_(const std::string &data);
   void update_ev_measurements_();
+  void setup_output_pin_(GPIOPin *pin);
+  void update_relays_();
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
   void send_restart_registration_();
   void send_connection_state_();
@@ -148,6 +158,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   float ev_l1_voltage_v_{NAN};
   float ev_l2_voltage_v_{NAN};
   float ev_l3_voltage_v_{NAN};
+  float ev_l1_power_factor_{NAN};
+  float ev_l2_power_factor_{NAN};
+  float ev_l3_power_factor_{NAN};
   float ev_power_w_{0.0f};
   float session_energy_kwh_{0.0f};
   float meter_value_kwh_{0.0f};
@@ -159,6 +172,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t last_heartbeat_ms_{0};
   uint32_t last_publish_ms_{0};
   ESPPreferenceObject settings_pref_{};
+  bool janitza_online_{false};
 
   text_sensor::TextSensor *status_text_sensor_{nullptr};
   text_sensor::TextSensor *state_text_sensor_{nullptr};
@@ -174,11 +188,18 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *l1_voltage_sensor_{nullptr};
   sensor::Sensor *l2_voltage_sensor_{nullptr};
   sensor::Sensor *l3_voltage_sensor_{nullptr};
+  sensor::Sensor *l1_power_factor_sensor_{nullptr};
+  sensor::Sensor *l2_power_factor_sensor_{nullptr};
+  sensor::Sensor *l3_power_factor_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *session_energy_sensor_{nullptr};
   sensor::Sensor *meter_value_sensor_{nullptr};
   sensor::Sensor *temperature_sensor_{nullptr};
   GPIOPin *rs485_de_pin_{nullptr};
+  GPIOPin *relay_evbox_known_pin_{nullptr};
+  GPIOPin *relay_janitza_ok_pin_{nullptr};
+  GPIOPin *relay_charging_active_pin_{nullptr};
+  GPIOPin *relay_failsafe_pin_{nullptr};
 };
 
 }  // namespace evbox_max
