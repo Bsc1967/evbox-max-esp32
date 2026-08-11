@@ -201,8 +201,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->schedule_startup_step_(5, 300);
       break;
     case FrameType::CONFIG_RESPONSE:
-      ESP_LOGI(TAG, "CB config received; checking autostart while preserving existing meter settings");
-      this->send_autostart_config_(frame.data);
+      ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve meter settings");
+      this->log_autostart_config_(frame.data);
       this->transition_(IDLE);
       break;
     case FrameType::CONFIG_SET_RESPONSE:
@@ -645,25 +645,14 @@ void EvboxMaxComponent::send_meter_update_interval_() {
   this->send_packet_(this->chargebox_address_, 0x65, "000F");
 }
 
-void EvboxMaxComponent::send_autostart_config_(const std::string &config) {
-  if (this->chargebox_address_ == 0) return;
+void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
   if (config.size() < 56) {
-    ESP_LOGW(TAG, "CB config too short for autostart patch: len=%u", static_cast<unsigned>(config.size()));
-    this->transition_(IDLE);
+    ESP_LOGW(TAG, "CB config too short to read autostart: len=%u", static_cast<unsigned>(config.size()));
     return;
   }
 
   const uint8_t auto_start = parse_hex_byte(config, 54, 0x01);
-  if (auto_start == 0x01) {
-    ESP_LOGI(TAG, "CB autostart already enabled; config unchanged");
-    return;
-  }
-
-  std::string patched = config;
-  patched.replace(54, 2, "01");
-  this->pending_config_34_ = patched;
-  ESP_LOGI(TAG, "Enabling CB autostart with minimal config patch; meter settings preserved");
-  this->schedule_startup_step_(6, 800);
+  ESP_LOGI(TAG, "CB autostart config is 0x%02X; config unchanged", auto_start);
 }
 
 void EvboxMaxComponent::send_heartbeat_() {
