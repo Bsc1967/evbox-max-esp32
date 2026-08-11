@@ -64,6 +64,7 @@ void EvboxMaxComponent::loop() {
   }
 
   this->watchdog_();
+  this->run_startup_sequence_();
   this->update_relays_();
 
   if (now - this->last_publish_ms_ >= 1000) {
@@ -187,16 +188,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->transition_(ASSIGN_ADDRESS);
       this->send_packet_(ADDR_BROADCAST, 0x11, this->chargebox_serial_ + hex_byte(this->chargebox_address_) + "03");
       this->transition_(READ_INFO);
-      this->send_connection_state_();
-      this->send_meter_update_interval_();
-      this->send_packet_(this->chargebox_address_, 0x13, "");
-      this->send_status_update_request_();
+      this->schedule_startup_step_(1, 300);
       break;
     case FrameType::INFO_RESPONSE:
       // Hardware/model data has been read. Next step is configuration so the
       // controller knows what limits and capabilities the ChargeBox reports.
       this->transition_(READ_CONFIG);
-      this->send_packet_(this->chargebox_address_, 0x33, "");
+      this->schedule_startup_step_(5, 300);
       break;
     case FrameType::CONFIG_RESPONSE:
       this->send_meter_modbus_config_(frame.data);
@@ -499,6 +497,53 @@ void EvboxMaxComponent::update_relays_() {
   if (this->relay_failsafe_pin_ != nullptr) this->relay_failsafe_pin_->digital_write(failsafe);
 }
 
+void EvboxMaxComponent::schedule_startup_step_(uint8_t step, uint32_t delay_ms) {
+  this->startup_step_ = step;
+  this->startup_step_due_ms_ = millis() + delay_ms;
+}
+
+void EvboxMaxComponent::run_startup_sequence_() {
+  if (this->startup_step_ == 0 || this->chargebox_address_ == 0) return;
+  if (millis() - this->startup_step_due_ms_ > 0x80000000UL) return;
+
+  const uint8_t step = this->startup_step_;
+  this->startup_step_ = 0;
+  switch (step) {
+    case 1:
+      ESP_LOGI(TAG, "Startup step 1: connection state");
+      this->send_connection_state_();
+      this->schedule_startup_step_(2, 400);
+      break;
+    case 2:
+      ESP_LOGI(TAG, "Startup step 2: meter update interval");
+      this->send_meter_update_interval_();
+      this->schedule_startup_step_(3, 300);
+      break;
+    case 3:
+      ESP_LOGI(TAG, "Startup step 3: meter info request");
+      this->send_packet_(this->chargebox_address_, 0x13, "");
+      this->schedule_startup_step_(4, 300);
+      break;
+    case 4:
+      ESP_LOGI(TAG, "Startup step 4: status update request");
+      this->send_status_update_request_();
+      this->schedule_startup_step_(5, 400);
+      break;
+    case 5:
+      ESP_LOGI(TAG, "Startup step 5: CB config request");
+      this->transition_(READ_CONFIG);
+      this->send_packet_(this->chargebox_address_, 0x33, "");
+      break;
+    case 6:
+      ESP_LOGI(TAG, "Startup step 6: CB config write");
+      this->send_packet_(this->chargebox_address_, 0x34, this->pending_config_34_);
+      this->pending_config_34_.clear();
+      break;
+    default:
+      break;
+  }
+}
+
 void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string &data) {
   const auto bytes = encode_frame(ADDR_CP, dst, cmd, data);
   ESP_LOGD(TAG, "TX EVBox dst=0x%02X src=0x%02X cmd=0x%02X data=%s", dst, ADDR_CP, cmd, data.c_str());
@@ -536,19 +581,43 @@ void EvboxMaxComponent::send_meter_update_interval_() {
 
 void EvboxMaxComponent::send_meter_modbus_config_(const std::string &config) {
   if (this->chargebox_address_ == 0) return;
-  if (config.size() < 32) {
+  if (config.size() < 60) {
     ESP_LOGW(TAG, "CB config too short for meter mode patch: len=%u", static_cast<unsigned>(config.size()));
     this->transition_(IDLE);
     return;
   }
 
-  std::string patched = config;
-  patched.replace(30, 2, "01");
-  if (this->chargebox_firmware_ > 100 && patched.size() == 74) {
+  const uint32_t connection_timeout = parse_hex_uint(config, 0, 8, 3600);
+  const uint32_t heartbeat_interval = parse_hex_uint(config, 8, 8, 900);
+  const uint32_t meter_update_interval = parse_hex_uint(config, 16, 8, 30);
+  const uint8_t relay = parse_hex_byte(config, 24, 0x03);
+  const uint8_t phase = parse_hex_byte(config, 32, 0x01);
+  const uint8_t tethered = parse_hex_byte(config, 34, 0x00);
+  const uint8_t led_brightness = parse_hex_byte(config, 36, 0x30);
+  const uint8_t auto_start = parse_hex_byte(config, 54, 0x01);
+  const uint8_t enable_cmd2a = parse_hex_byte(config, 56, 0x00);
+  const uint8_t auto_stop = parse_hex_byte(config, 58, 0x01);
+
+  std::string patched = "FFFFFFFF";
+  patched += hex_byte(led_brightness);
+  patched += hex_byte(relay);
+  patched += "0000";
+  patched += "01";
+  patched += hex_byte(phase);
+  patched += hex_byte(tethered);
+  patched += "0100000000000000";
+  patched += hex_byte(auto_start);
+  patched += hex_byte(enable_cmd2a);
+  patched += hex_dword(connection_timeout);
+  patched += hex_dword(heartbeat_interval);
+  patched += hex_dword(meter_update_interval);
+  patched += hex_byte(auto_stop);
+  if (this->chargebox_firmware_ > 100) {
     patched += "0000000003E8010000";
   }
-  ESP_LOGI(TAG, "Setting CB meter config to Modbus/serial address 1");
-  this->send_packet_(this->chargebox_address_, 0x34, patched);
+  this->pending_config_34_ = patched;
+  ESP_LOGI(TAG, "Setting CB meter config to Modbus/serial address 1 after startup delay");
+  this->schedule_startup_step_(6, 800);
 }
 
 void EvboxMaxComponent::send_heartbeat_() {

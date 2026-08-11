@@ -129,6 +129,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void update_ev_measurements_();
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
+  void run_startup_sequence_();
+  void schedule_startup_step_(uint8_t step, uint32_t delay_ms);
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
   void send_restart_registration_();
   void send_connection_state_();
@@ -182,6 +184,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t last_rx_ms_{0};
   uint32_t last_heartbeat_ms_{0};
   uint32_t last_publish_ms_{0};
+  uint32_t startup_step_due_ms_{0};
+  uint8_t startup_step_{0};
+  std::string pending_config_34_ {};
   ESPPreferenceObject settings_pref_{};
   bool janitza_online_{false};
 
