@@ -53,8 +53,12 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
     const uint8_t clamped = phases < 1 ? 1 : (phases > 3 ? 3 : phases);
     this->inputs_.charge_phases = clamped;
     this->inputs_.active_phase_mask = clamped == 1 ? 0x01 : (clamped == 2 ? 0x03 : 0x07);
+    this->update_ev_measurements_();
   }
-  void set_active_phase_mask(uint8_t mask) { this->inputs_.active_phase_mask = mask & 0x07; }
+  void set_active_phase_mask(uint8_t mask) {
+    this->inputs_.active_phase_mask = mask & 0x07;
+    this->update_ev_measurements_();
+  }
   void set_heartbeat_interval(uint32_t interval) { this->heartbeat_interval_ms_ = interval; }
   void set_watchdog_timeout(uint32_t timeout) { this->watchdog_timeout_ms_ = timeout; }
   void set_rs485_de_pin(GPIOPin *pin) { this->rs485_de_pin_ = pin; }
@@ -64,11 +68,19 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
   void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
+  void set_l1_current_sensor(sensor::Sensor *sensor) { this->l1_current_sensor_ = sensor; }
+  void set_l2_current_sensor(sensor::Sensor *sensor) { this->l2_current_sensor_ = sensor; }
+  void set_l3_current_sensor(sensor::Sensor *sensor) { this->l3_current_sensor_ = sensor; }
+  void set_l1_voltage_sensor(sensor::Sensor *sensor) { this->l1_voltage_sensor_ = sensor; }
+  void set_l2_voltage_sensor(sensor::Sensor *sensor) { this->l2_voltage_sensor_ = sensor; }
+  void set_l3_voltage_sensor(sensor::Sensor *sensor) { this->l3_voltage_sensor_ = sensor; }
+  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   void set_session_energy_sensor(sensor::Sensor *sensor) { this->session_energy_sensor_ = sensor; }
   void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
 
-  void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current, bool online);
+  void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current,
+                      float l1_voltage, float l2_voltage, float l3_voltage, bool online);
   void set_pv_enabled(bool enabled);
   void start_session();
   void stop_session();
@@ -94,6 +106,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   StoredSettings current_settings_() const;
   void apply_settings_(const StoredSettings &settings);
   void update_meter_from_state_(const std::string &data);
+  void update_ev_measurements_();
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
   void send_restart_registration_();
   void send_connection_state_();
@@ -123,6 +136,13 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool have_session_start_meter_{false};
   float active_current_{0.0f};
   bool current_limit_returned_{false};
+  float ev_l1_current_a_{0.0f};
+  float ev_l2_current_a_{0.0f};
+  float ev_l3_current_a_{0.0f};
+  float ev_l1_voltage_v_{NAN};
+  float ev_l2_voltage_v_{NAN};
+  float ev_l3_voltage_v_{NAN};
+  float ev_power_w_{0.0f};
   float session_energy_kwh_{0.0f};
   float meter_value_kwh_{0.0f};
   float session_start_meter_kwh_{0.0f};
@@ -139,6 +159,13 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
   sensor::Sensor *current_limit_sensor_{nullptr};
+  sensor::Sensor *l1_current_sensor_{nullptr};
+  sensor::Sensor *l2_current_sensor_{nullptr};
+  sensor::Sensor *l3_current_sensor_{nullptr};
+  sensor::Sensor *l1_voltage_sensor_{nullptr};
+  sensor::Sensor *l2_voltage_sensor_{nullptr};
+  sensor::Sensor *l3_voltage_sensor_{nullptr};
+  sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *session_energy_sensor_{nullptr};
   sensor::Sensor *meter_value_sensor_{nullptr};
   sensor::Sensor *temperature_sensor_{nullptr};
