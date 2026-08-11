@@ -197,7 +197,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->schedule_startup_step_(5, 300);
       break;
     case FrameType::CONFIG_RESPONSE:
-      this->send_meter_modbus_config_(frame.data);
+      ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve working meter settings");
+      this->transition_(IDLE);
       break;
     case FrameType::CONFIG_SET_RESPONSE:
       if (frame.data == hex_word(ACK)) {
