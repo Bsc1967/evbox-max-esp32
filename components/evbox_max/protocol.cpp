@@ -1,102 +1,143 @@
 #include "protocol.h"
 
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+
 namespace esphome {
 namespace evbox_max {
 
-uint8_t checksum(const uint8_t *data, size_t length) {
+uint8_t evbox_checksum(const std::string &payload) {
   uint8_t sum = 0;
-  for (size_t i = 0; i < length; i++) {
-    sum = static_cast<uint8_t>(sum + data[i]);
-  }
-  // The transmitted checksum is chosen so that all protected bytes plus the
-  // checksum add up to 0 modulo 256. This catches most single-byte corruption
-  // while staying cheap enough for a small MCU.
-  return static_cast<uint8_t>(0U - sum);
+  for (char c : payload) sum = static_cast<uint8_t>(sum + static_cast<uint8_t>(c));
+  return sum;
 }
 
-std::vector<uint8_t> encode_frame(const Frame &frame) {
+uint8_t evbox_parity(const std::string &payload) {
+  uint8_t value = 0;
+  for (char c : payload) value ^= static_cast<uint8_t>(c);
+  return value;
+}
+
+std::string hex_byte(uint8_t value) {
+  char out[3];
+  std::snprintf(out, sizeof(out), "%02X", value);
+  return out;
+}
+
+std::string hex_word(uint16_t value) {
+  char out[5];
+  std::snprintf(out, sizeof(out), "%04X", value);
+  return out;
+}
+
+std::string hex_dword(uint32_t value) {
+  char out[9];
+  std::snprintf(out, sizeof(out), "%08lX", static_cast<unsigned long>(value));
+  return out;
+}
+
+uint8_t parse_hex_byte(const std::string &text, size_t offset, uint8_t fallback) {
+  if (offset + 2 > text.size()) return fallback;
+  const std::string slice = text.substr(offset, 2);
+  char *end = nullptr;
+  errno = 0;
+  const auto value = std::strtoul(slice.c_str(), &end, 16);
+  return errno != 0 || end == slice.c_str() || *end != '\0' ? fallback : static_cast<uint8_t>(value & 0xFF);
+}
+
+uint32_t parse_hex_uint(const std::string &text, size_t offset, size_t length, uint32_t fallback) {
+  if (offset + length > text.size()) return fallback;
+  const std::string slice = text.substr(offset, length);
+  char *end = nullptr;
+  errno = 0;
+  const auto value = std::strtoul(slice.c_str(), &end, 16);
+  return errno != 0 || end == slice.c_str() || *end != '\0' ? fallback : static_cast<uint32_t>(value);
+}
+
+FrameType frame_type_for_cmd(uint8_t cmd) {
+  switch (cmd) {
+    case 0x11: return FrameType::REGISTRATION;
+    case 0x13: return FrameType::INFO_RESPONSE;
+    case 0x21: return FrameType::HEARTBEAT;
+    case 0x23: return FrameType::METERING_START;
+    case 0x24: return FrameType::METERING_END;
+    case 0x26: return FrameType::STATE_UPDATE;
+    case 0x33: return FrameType::CONFIG_RESPONSE;
+    case 0x66: return FrameType::METER_PUSH;
+    case 0x6A: return FrameType::CURRENT_REQUEST;
+    case 0x6B: return FrameType::CURRENT_SETPOINT;
+    default: return FrameType::UNKNOWN;
+  }
+}
+
+std::vector<uint8_t> encode_frame(uint8_t src, uint8_t dst, uint8_t cmd, const std::string &data) {
+  const std::string payload = hex_byte(dst) + hex_byte(src) + hex_byte(cmd) + data;
+  const std::string protected_tail = payload + hex_byte(evbox_checksum(payload)) + hex_byte(evbox_parity(payload));
   std::vector<uint8_t> out;
-  const auto payload_length = static_cast<uint8_t>(frame.payload.size());
-
-  out.reserve(5 + payload_length);
+  out.reserve(protected_tail.size() + 2);
   out.push_back(EVBOX_MAX_SOF);
-  out.push_back(frame.address);
-  out.push_back(static_cast<uint8_t>(frame.type));
-  out.push_back(payload_length);
-  out.insert(out.end(), frame.payload.begin(), frame.payload.end());
-
-  // The start byte is a synchronisation marker, not part of the protected
-  // payload. Everything after SOF is included in the checksum.
-  const uint8_t cs = checksum(out.data() + 1, out.size() - 1);
-  out.push_back(cs);
+  out.insert(out.end(), protected_tail.begin(), protected_tail.end());
+  out.push_back(EVBOX_MAX_EOF);
   return out;
 }
 
 bool FrameParser::push(uint8_t byte, Frame *frame) {
-  // Streaming parser: UART bytes may arrive one at a time, so parsing keeps
-  // its state between loop() calls and returns true only for a complete frame.
-  switch (this->state_) {
-    case ParseState::WAIT_SOF:
-      if (byte == EVBOX_MAX_SOF) {
-        this->current_ = Frame{};
-        this->checksum_buffer_.clear();
-        this->state_ = ParseState::ADDRESS;
-      }
-      break;
-    case ParseState::ADDRESS:
-      this->current_.address = byte;
-      this->checksum_buffer_.push_back(byte);
-      this->state_ = ParseState::TYPE;
-      break;
-    case ParseState::TYPE:
-      this->current_.type = static_cast<FrameType>(byte);
-      this->checksum_buffer_.push_back(byte);
-      this->state_ = ParseState::LENGTH;
-      break;
-    case ParseState::LENGTH:
-      this->expected_length_ = byte;
-      this->checksum_buffer_.push_back(byte);
-      this->current_.payload.clear();
-      if (this->expected_length_ > EVBOX_MAX_MAX_PAYLOAD) {
-        // Length is outside the safety envelope. Drop the partial frame and
-        // wait for the next SOF instead of risking buffer growth.
-        this->reset();
-      } else if (this->expected_length_ == 0) {
-        this->state_ = ParseState::CHECKSUM;
-      } else {
-        this->state_ = ParseState::PAYLOAD;
-      }
-      break;
-    case ParseState::PAYLOAD:
-      this->current_.payload.push_back(byte);
-      this->checksum_buffer_.push_back(byte);
-      if (this->current_.payload.size() >= this->expected_length_) {
-        this->state_ = ParseState::CHECKSUM;
-      }
-      break;
-    case ParseState::CHECKSUM: {
-      const uint8_t expected = checksum(this->checksum_buffer_.data(), this->checksum_buffer_.size());
-      if (byte == expected) {
-        // Copy out the completed frame before resetting parser state.
-        *frame = this->current_;
-        this->reset();
-        return true;
-      }
-      // Bad checksum means the frame is not trustworthy; discard it silently
-      // and resynchronise on the next start byte.
-      this->reset();
-      break;
-    }
+  if (this->pending_trailer_) {
+    this->pending_trailer_ = false;
+    if (byte == EVBOX_MAX_TRAILER) return false;
   }
 
-  return false;
+  if (byte == EVBOX_MAX_SOF) {
+    this->buffer_.clear();
+    this->in_frame_ = true;
+    return false;
+  }
+  if (!this->in_frame_) return false;
+
+  this->buffer_.push_back(byte);
+  if (this->buffer_.size() > EVBOX_MAX_MAX_FRAME) {
+    this->reset();
+    return false;
+  }
+  if (byte != EVBOX_MAX_EOF) return false;
+
+  this->in_frame_ = false;
+  this->pending_trailer_ = true;
+  return this->parse_buffer_(frame);
+}
+
+bool FrameParser::parse_buffer_(Frame *frame) {
+  if (this->buffer_.size() < 11 || this->buffer_.back() != EVBOX_MAX_EOF) return false;
+
+  std::string text;
+  text.reserve(this->buffer_.size());
+  for (size_t i = 0; i + 1 < this->buffer_.size(); i++) {
+    const uint8_t byte = this->buffer_[i];
+    if (!((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'F') || (byte >= 'a' && byte <= 'f'))) return false;
+    text.push_back(static_cast<char>(byte >= 'a' && byte <= 'f' ? byte - 32 : byte));
+  }
+  if (text.size() < 10) return false;
+
+  const std::string payload = text.substr(0, text.size() - 4);
+  const uint8_t got_checksum = parse_hex_byte(text, text.size() - 4);
+  const uint8_t got_parity = parse_hex_byte(text, text.size() - 2);
+  if (got_checksum != evbox_checksum(payload) || got_parity != evbox_parity(payload)) return false;
+  if (payload.size() < 6) return false;
+
+  frame->dst = parse_hex_byte(payload, 0);
+  frame->src = parse_hex_byte(payload, 2);
+  frame->cmd = parse_hex_byte(payload, 4);
+  frame->address = frame->src;
+  frame->type = frame_type_for_cmd(frame->cmd);
+  frame->data = payload.substr(6);
+  return true;
 }
 
 void FrameParser::reset() {
-  this->state_ = ParseState::WAIT_SOF;
-  this->expected_length_ = 0;
-  this->current_ = Frame{};
-  this->checksum_buffer_.clear();
+  this->in_frame_ = false;
+  this->pending_trailer_ = false;
+  this->buffer_.clear();
 }
 
 }  // namespace evbox_max
