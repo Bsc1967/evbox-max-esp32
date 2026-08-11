@@ -64,6 +64,8 @@ FrameType frame_type_for_cmd(uint8_t cmd) {
     case 0x24: return FrameType::METERING_END;
     case 0x26: return FrameType::STATE_UPDATE;
     case 0x33: return FrameType::CONFIG_RESPONSE;
+    case 0x34: return FrameType::CONFIG_SET_RESPONSE;
+    case 0x65: return FrameType::METER_UPDATE_INTERVAL;
     case 0x66: return FrameType::METER_PUSH;
     case 0x6A: return FrameType::CURRENT_REQUEST;
     case 0x6B: return FrameType::CURRENT_SETPOINT;
