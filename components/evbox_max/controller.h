@@ -35,8 +35,8 @@ struct ControlInputs {
   float grid_total_power_w{0.0f};
   float grid_import_w{0.0f};
   float grid_export_w{0.0f};
-  uint8_t charge_phases{3};
-  uint8_t active_phase_mask{0x07};
+  uint8_t charge_phases{1};
+  uint8_t active_phase_mask{0x01};
   bool janitza_online{false};
   bool pv_enabled{false};
 };
@@ -66,3 +66,4 @@ class ChargeController {
 
 }  // namespace evbox_max
 }  // namespace esphome
+

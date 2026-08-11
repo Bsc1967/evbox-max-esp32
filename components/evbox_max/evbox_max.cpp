@@ -366,8 +366,37 @@ void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
 void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   if (data.size() < 26) return;
 
+  if (data.size() >= 132) {
+    const uint32_t measurement_block = parse_hex_uint(data, 68, 8) | parse_hex_uint(data, 76, 8) |
+                                       parse_hex_uint(data, 84, 8) | parse_hex_uint(data, 92, 8) |
+                                       parse_hex_uint(data, 100, 8);
+    if (measurement_block != 0) {
+      this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 68, 4));
+      this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 72, 4));
+      this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 76, 4));
+      this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
+      this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 84, 4)) / 100.0f;
+      this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 88, 4)) / 100.0f;
+      this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 92, 4));
+      this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
+      this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
+      this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
+      ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f",
+               this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
+               this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
+               this->ev_l3_power_factor_);
+    } else {
+      ESP_LOGD(TAG, "CB cmd26 extended meter block is zero; keeping configured phase mask 0x%02X",
+               this->evbox_active_phase_mask_);
+    }
+    this->update_phase_detection_();
+  }
+
   const uint32_t raw_meter = parse_hex_uint(data, 18, 8);
-  if (raw_meter == 0) return;
+  if (raw_meter == 0) {
+    ESP_LOGD(TAG, "CB cmd26 meter counter is zero; keeping previous kWh value %.3f", this->meter_value_kwh_);
+    return;
+  }
 
   // EVBox cmd26 carries the ChargeBox meter counter in Wh at this offset in
   // captures from the working local test app. Publish as kWh for Home Assistant.
@@ -377,24 +406,6 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   this->meter_value_kwh_ = meter_kwh;
   if (this->session_active_ && this->have_session_start_meter_ && meter_kwh >= this->session_start_meter_kwh_) {
     this->session_energy_kwh_ = meter_kwh - this->session_start_meter_kwh_;
-  }
-
-  if (data.size() >= 132) {
-    this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 68, 4));
-    this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 72, 4));
-    this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 76, 4));
-    this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
-    this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 84, 4)) / 100.0f;
-    this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 88, 4)) / 100.0f;
-    this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 92, 4));
-    this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
-    this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
-    this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
-    this->update_phase_detection_();
-    ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f PF %.3f/%.3f/%.3f",
-             this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
-             this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
-             this->ev_l3_power_factor_);
   }
   ESP_LOGD(TAG, "CB meter %.3f kWh session %.3f kWh", this->meter_value_kwh_, this->session_energy_kwh_);
 }
@@ -666,3 +677,4 @@ const char *EvboxMaxComponent::communication_name_() const {
 
 }  // namespace evbox_max
 }  // namespace esphome
+

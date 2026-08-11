@@ -80,7 +80,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CHARGER_BREAKER_CURRENT, default=16): cv.float_range(min=0, max=32),
         cv.Optional(CONF_MAIN_FUSE_CURRENT, default=25): cv.float_range(min=0, max=80),
         cv.Optional(CONF_MANUAL_CURRENT, default=6): cv.float_range(min=0, max=32),
-        cv.Optional(CONF_CHARGE_PHASES, default=3): cv.one_of(1, 2, 3, int=True),
+        cv.Optional(CONF_CHARGE_PHASES, default=1): cv.one_of(1, 2, 3, int=True),
         cv.Optional(CONF_FAILSAFE_CURRENT, default=6): cv.float_range(min=0, max=16),
         cv.Optional(CONF_FAILSAFE_MODE, default="LIMIT_6A"): cv.enum(
             FAILSAFE_MODES, upper=True
@@ -200,7 +200,7 @@ CONFIG_SCHEMA = cv.Schema(
             state_class="total_increasing",
         ),
         cv.Optional(CONF_TEMPERATURE): sensor.sensor_schema(
-            unit_of_measurement="°C",
+            unit_of_measurement="??C",
             accuracy_decimals=1,
             device_class="temperature",
             state_class="measurement",
@@ -310,3 +310,4 @@ async def to_code(config):
     if CONF_TEMPERATURE in config:
         sens = await sensor.new_sensor(config[CONF_TEMPERATURE])
         cg.add(var.set_temperature_sensor(sens))
+

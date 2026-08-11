@@ -75,7 +75,7 @@ float ChargeController::apply_safety_limits_(float requested_current, const Cont
     return std::max(ev_phase_current, 0.0f) + (main_limit - signed_current);
   };
 
-  const uint8_t phase_mask = inputs.active_phase_mask != 0 ? inputs.active_phase_mask : 0x07;
+  const uint8_t phase_mask = inputs.active_phase_mask != 0 ? inputs.active_phase_mask : 0x01;
   if ((phase_mask & 0x01) != 0) {
     allowed = std::min(allowed, phase_allowance(inputs.l1_current, inputs.l1_power_w, inputs.ev_l1_current));
   }
@@ -98,3 +98,4 @@ float ChargeController::failsafe_() const {
 
 }  // namespace evbox_max
 }  // namespace esphome
+
