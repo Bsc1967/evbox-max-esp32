@@ -29,6 +29,9 @@ class JanitzaUmg604Component : public PollingComponent {
   void set_register_l1_voltage(uint16_t value) { this->reg_l1_voltage_ = value; }
   void set_register_l2_voltage(uint16_t value) { this->reg_l2_voltage_ = value; }
   void set_register_l3_voltage(uint16_t value) { this->reg_l3_voltage_ = value; }
+  void set_register_l1_power(uint16_t value) { this->reg_l1_power_ = value; }
+  void set_register_l2_power(uint16_t value) { this->reg_l2_power_ = value; }
+  void set_register_l3_power(uint16_t value) { this->reg_l3_power_ = value; }
   void set_register_total_power(uint16_t value) { this->reg_total_power_ = value; }
   void set_register_import_power(uint16_t value) { this->reg_import_power_ = value; }
   void set_register_export_power(uint16_t value) { this->reg_export_power_ = value; }
@@ -39,6 +42,9 @@ class JanitzaUmg604Component : public PollingComponent {
   void set_l1_voltage_sensor(sensor::Sensor *sensor) { this->l1_voltage_sensor_ = sensor; }
   void set_l2_voltage_sensor(sensor::Sensor *sensor) { this->l2_voltage_sensor_ = sensor; }
   void set_l3_voltage_sensor(sensor::Sensor *sensor) { this->l3_voltage_sensor_ = sensor; }
+  void set_l1_power_sensor(sensor::Sensor *sensor) { this->l1_power_sensor_ = sensor; }
+  void set_l2_power_sensor(sensor::Sensor *sensor) { this->l2_power_sensor_ = sensor; }
+  void set_l3_power_sensor(sensor::Sensor *sensor) { this->l3_power_sensor_ = sensor; }
   void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
   void set_import_power_sensor(sensor::Sensor *sensor) { this->import_power_sensor_ = sensor; }
   void set_export_power_sensor(sensor::Sensor *sensor) { this->export_power_sensor_ = sensor; }
@@ -74,6 +80,9 @@ class JanitzaUmg604Component : public PollingComponent {
   uint16_t reg_l1_voltage_{1317};
   uint16_t reg_l2_voltage_{1319};
   uint16_t reg_l3_voltage_{1321};
+  uint16_t reg_l1_power_{1333};
+  uint16_t reg_l2_power_{1335};
+  uint16_t reg_l3_power_{1337};
   uint16_t reg_total_power_{1369};
   uint16_t reg_import_power_{1369};
   uint16_t reg_export_power_{1369};
@@ -86,6 +95,9 @@ class JanitzaUmg604Component : public PollingComponent {
   float l1_voltage_v_{0.0f};
   float l2_voltage_v_{0.0f};
   float l3_voltage_v_{0.0f};
+  float l1_power_w_{0.0f};
+  float l2_power_w_{0.0f};
+  float l3_power_w_{0.0f};
   float phase_detect_current_{5.0f};
   uint8_t detected_charge_phases_{3};
   uint8_t detected_charge_phase_mask_{0x07};
@@ -96,6 +108,9 @@ class JanitzaUmg604Component : public PollingComponent {
   sensor::Sensor *l1_voltage_sensor_{nullptr};
   sensor::Sensor *l2_voltage_sensor_{nullptr};
   sensor::Sensor *l3_voltage_sensor_{nullptr};
+  sensor::Sensor *l1_power_sensor_{nullptr};
+  sensor::Sensor *l2_power_sensor_{nullptr};
+  sensor::Sensor *l3_power_sensor_{nullptr};
   sensor::Sensor *total_power_sensor_{nullptr};
   sensor::Sensor *import_power_sensor_{nullptr};
   sensor::Sensor *export_power_sensor_{nullptr};
