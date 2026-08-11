@@ -39,6 +39,9 @@ class ChargeController {
   void set_mode(ChargingMode mode) { this->mode_ = mode; }
   void set_failsafe_mode(FailsafeMode mode) { this->failsafe_mode_ = mode; }
   void set_failsafe_current(float current) { this->failsafe_current_ = current; }
+  ChargingMode mode() const { return this->mode_; }
+  FailsafeMode failsafe_mode() const { return this->failsafe_mode_; }
+  float failsafe_current() const { return this->failsafe_current_; }
 
   float calculate_current(const ControlInputs &inputs) const;
 
