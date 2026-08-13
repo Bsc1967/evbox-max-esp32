@@ -199,6 +199,23 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ms_ = millis();
   this->transition_(STARTING);
   this->send_remote_start_();
+  if (this->have_last_current_request_code_ &&
+      (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0xA7 ||
+       this->last_current_request_code_ == 0x81)) {
+    ESP_LOGI(TAG, "Start requested while CB current state is %s; sending current limit immediately",
+             this->current_request_name_(this->last_current_request_code_));
+    this->current_start_released_ = true;
+    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+    this->send_current_setpoint_(this->desired_current_);
+    if (this->last_current_request_code_ == 0x81) {
+      this->session_active_ = true;
+      this->start_requested_ = false;
+      this->start_requested_ms_ = 0;
+      this->transition_(CHARGING);
+    } else {
+      this->transition_(SESSION_STARTING);
+    }
+  }
 }
 
 void EvboxMaxComponent::stop_session() {
@@ -854,6 +871,7 @@ bool EvboxMaxComponent::current_setpoint_allowed_() const {
 bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
   if (this->chargebox_hardware_generation_ != 3) return false;
   switch (code) {
+    case 0x30:
     case 0xA7:
     case 0x81:
       return true;
