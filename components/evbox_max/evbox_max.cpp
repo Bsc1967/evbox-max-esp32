@@ -251,7 +251,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::HEARTBEAT:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->chargebox_address_ = frame.src;
+        this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         this->last_heartbeat_rx_ms_ = millis();
         ESP_LOGI(TAG, "CB heartbeat cmd21 received; sending ACK");
@@ -261,7 +261,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::AUTHENTICATE_CARD:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->chargebox_address_ = frame.src;
+        this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         const uint8_t auth_state = parse_hex_byte(frame.data, 0);
         const uint8_t card_len = parse_hex_byte(frame.data, 2);
@@ -282,7 +282,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::CURRENT_REQUEST:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->chargebox_address_ = frame.src;
+        this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         const uint8_t request_code = parse_hex_byte(frame.data, 0);
         this->last_current_request_code_ = request_code;
@@ -313,7 +313,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::CURRENT_SETPOINT:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->chargebox_address_ = frame.src;
+        this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         ESP_LOGD(TAG, "CB acknowledged current setpoint");
         if (!this->stop_requested_ && this->charge_flow_requested_() &&
@@ -324,7 +324,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::STATE_UPDATE:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->chargebox_address_ = frame.src;
+        this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         const uint8_t code = parse_hex_byte(frame.data, 0);
         const uint8_t is_charging = parse_hex_byte(frame.data, 6);
@@ -682,6 +682,16 @@ void EvboxMaxComponent::update_relays_() {
   if (this->relay_janitza_ok_pin_ != nullptr) this->relay_janitza_ok_pin_->digital_write(this->janitza_online_);
   if (this->relay_charging_active_pin_ != nullptr) this->relay_charging_active_pin_->digital_write(charging_active);
   if (this->relay_failsafe_pin_ != nullptr) this->relay_failsafe_pin_->digital_write(failsafe);
+}
+
+void EvboxMaxComponent::note_chargebox_seen_(uint8_t address) {
+  if (address == 0 || address > 20) return;
+  const bool first_seen_after_boot = this->chargebox_address_ == 0;
+  this->chargebox_address_ = address;
+  if (first_seen_after_boot && this->startup_step_ == 0) {
+    ESP_LOGI(TAG, "ChargeBox already active at 0x%02X; running startup sync", address);
+    this->schedule_startup_step_(1, 100);
+  }
 }
 
 void EvboxMaxComponent::schedule_startup_step_(uint8_t step, uint32_t delay_ms) {

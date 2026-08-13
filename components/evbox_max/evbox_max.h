@@ -140,6 +140,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void update_ev_measurements_();
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
+  void note_chargebox_seen_(uint8_t address);
   void run_startup_sequence_();
   void schedule_startup_step_(uint8_t step, uint32_t delay_ms);
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
