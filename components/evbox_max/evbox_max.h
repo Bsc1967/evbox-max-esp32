@@ -189,7 +189,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint8_t evbox_detected_charge_phases_{1};
   uint8_t evbox_active_phase_mask_{0x01};
   float session_energy_kwh_{0.0f};
-  float meter_value_kwh_{0.0f};
+  float meter_value_kwh_{NAN};
   float session_start_meter_kwh_{0.0f};
   float temperature_c_{NAN};
   uint32_t heartbeat_interval_ms_{5000};
@@ -241,4 +241,3 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
 
 }  // namespace evbox_max
 }  // namespace esphome
-

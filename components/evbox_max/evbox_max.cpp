@@ -49,7 +49,11 @@ void EvboxMaxComponent::loop() {
   }
 
   const uint32_t now = millis();
-  if (this->chargebox_address_ == 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
+  if (this->state_ == FAULT && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
+    ESP_LOGI(TAG, "EVBox bus silent in FAULT; requesting registration restart");
+    this->send_restart_registration_();
+    this->last_periodic_cmd18_ms_ = now;
+  } else if (this->chargebox_address_ == 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
     this->send_restart_registration_();
     this->last_periodic_cmd18_ms_ = now;
   } else if (this->chargebox_address_ != 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
@@ -360,7 +364,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->session_active_ = accept_session;
         if (accept_session) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
-          this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
+          this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
           this->transition_(SESSION_STARTING);
         } else {
           ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; no start requested");
@@ -500,17 +504,33 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
 void EvboxMaxComponent::update_meter_from_push_(const std::string &data) {
   if (data.size() < 44) return;
 
-  this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 0, 4));
-  this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 4, 4));
-  this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 8, 4));
-  this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 12, 4)) / 100.0f;
-  this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 16, 4)) / 100.0f;
-  this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 20, 4)) / 100.0f;
-  this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 24, 4)) / 1000.0f;
-  this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 28, 4)) / 1000.0f;
-  this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 32, 4)) / 1000.0f;
-
+  const uint32_t raw_l1_voltage = parse_hex_uint(data, 0, 4);
+  const uint32_t raw_l2_voltage = parse_hex_uint(data, 4, 4);
+  const uint32_t raw_l3_voltage = parse_hex_uint(data, 8, 4);
+  const uint32_t raw_l1_current = parse_hex_uint(data, 12, 4);
+  const uint32_t raw_l2_current = parse_hex_uint(data, 16, 4);
+  const uint32_t raw_l3_current = parse_hex_uint(data, 20, 4);
+  const uint32_t raw_pf1 = parse_hex_uint(data, 24, 4);
+  const uint32_t raw_pf2 = parse_hex_uint(data, 28, 4);
+  const uint32_t raw_pf3 = parse_hex_uint(data, 32, 4);
   const uint32_t raw_meter = parse_hex_uint(data, 36, 8);
+  const bool all_zero_block = raw_l1_voltage == 0 && raw_l2_voltage == 0 && raw_l3_voltage == 0 &&
+                              raw_l1_current == 0 && raw_l2_current == 0 && raw_l3_current == 0 &&
+                              raw_pf1 == 0 && raw_pf2 == 0 && raw_pf3 == 0 && raw_meter == 0;
+  if (all_zero_block) {
+    ESP_LOGD(TAG, "CB meter push is all zero; keeping previous EVBox meter measurements");
+    return;
+  }
+
+  this->ev_l1_voltage_v_ = static_cast<float>(raw_l1_voltage);
+  this->ev_l2_voltage_v_ = static_cast<float>(raw_l2_voltage);
+  this->ev_l3_voltage_v_ = static_cast<float>(raw_l3_voltage);
+  this->ev_l1_current_a_ = static_cast<float>(raw_l1_current) / 100.0f;
+  this->ev_l2_current_a_ = static_cast<float>(raw_l2_current) / 100.0f;
+  this->ev_l3_current_a_ = static_cast<float>(raw_l3_current) / 100.0f;
+  this->ev_l1_power_factor_ = static_cast<float>(raw_pf1) / 1000.0f;
+  this->ev_l2_power_factor_ = static_cast<float>(raw_pf2) / 1000.0f;
+  this->ev_l3_power_factor_ = static_cast<float>(raw_pf3) / 1000.0f;
   if (raw_meter > 0) {
     const float meter_kwh = static_cast<float>(raw_meter) / 1000.0f;
     if (meter_kwh > 0.0f && meter_kwh < 1000000.0f) {
@@ -813,7 +833,7 @@ void EvboxMaxComponent::publish_() {
   if (this->session_energy_sensor_ != nullptr) {
     this->session_energy_sensor_->publish_state(this->session_energy_kwh_);
   }
-  if (this->meter_value_sensor_ != nullptr) {
+  if (this->meter_value_sensor_ != nullptr && !std::isnan(this->meter_value_kwh_)) {
     this->meter_value_sensor_->publish_state(this->meter_value_kwh_);
   }
   if (this->temperature_sensor_ != nullptr && !std::isnan(this->temperature_c_)) {
@@ -846,4 +866,3 @@ const char *EvboxMaxComponent::communication_name_() const {
 
 }  // namespace evbox_max
 }  // namespace esphome
-
