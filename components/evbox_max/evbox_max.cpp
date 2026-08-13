@@ -29,7 +29,7 @@ void EvboxMaxComponent::setup() {
   this->setup_output_pin_(this->relay_failsafe_pin_);
   this->transition_(WAIT_REGISTRATION);
   this->last_rx_ms_ = millis();
-  this->last_heartbeat_ms_ = millis();
+  this->last_periodic_cmd18_ms_ = millis();
   this->send_restart_registration_();
 }
 
@@ -49,20 +49,18 @@ void EvboxMaxComponent::loop() {
   }
 
   const uint32_t now = millis();
-  if (this->chargebox_address_ == 0 && now - this->last_heartbeat_ms_ >= this->heartbeat_interval_ms_) {
+  if (this->chargebox_address_ == 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
     this->send_restart_registration_();
-    this->last_heartbeat_ms_ = now;
-  } else if (this->chargebox_address_ != 0 && now - this->last_heartbeat_ms_ >= this->heartbeat_interval_ms_) {
-    // TX path: heartbeat proves the controller is alive; current setpoint is
-    // recalculated locally from the selected control mode and Janitza inputs.
-    this->send_heartbeat_();
-    if (!this->stop_requested_ &&
-        (this->session_active_ || this->state_ == CHARGING || this->state_ == SESSION_STARTING ||
-         this->state_ == STARTING)) {
+    this->last_periodic_cmd18_ms_ = now;
+  } else if (this->chargebox_address_ != 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
+    // Periodic cmd18 is a status poll used by the current captures. It is kept
+    // separate from the real MAX heartbeat cmd21, which is only sent as ACK.
+    this->send_periodic_cmd18_();
+    if (!this->stop_requested_ && this->charge_flow_requested_()) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
     }
-    this->last_heartbeat_ms_ = now;
+    this->last_periodic_cmd18_ms_ = now;
   }
 
   this->watchdog_();
@@ -80,6 +78,11 @@ void EvboxMaxComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Heartbeat interval: %u ms", this->heartbeat_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Watchdog timeout: %u ms", this->watchdog_timeout_ms_);
   ESP_LOGCONFIG(TAG, "  ChargeBox address: 0x%02X", this->chargebox_address_);
+  ESP_LOGCONFIG(TAG, "  ChargeBox serial: %s", this->chargebox_serial_.c_str());
+  ESP_LOGCONFIG(TAG, "  ChargeBox firmware: %u", this->chargebox_firmware_);
+  ESP_LOGCONFIG(TAG, "  ChargeBox hardware generation: %u", this->chargebox_hardware_generation_);
+  ESP_LOGCONFIG(TAG, "  Protocol profile: %s", this->protocol_profile_name_());
+  ESP_LOGCONFIG(TAG, "  Commissioning mode: %s", this->commissioning_mode_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  RS485 driver enable pin: %s", this->rs485_de_pin_ != nullptr ? "configured" : "not configured");
 }
 
@@ -152,18 +155,20 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
     this->send_current_setpoint_(next_current);
-    this->last_heartbeat_ms_ = millis();
+    this->last_periodic_cmd18_ms_ = millis();
   }
 }
 
 void EvboxMaxComponent::start_session() {
   this->stop_requested_ = false;
+  this->start_requested_ = true;
   this->session_active_ = true;
   this->transition_(AUTHORIZED);
 }
 
 void EvboxMaxComponent::stop_session() {
   this->stop_requested_ = true;
+  this->start_requested_ = false;
   this->session_active_ = false;
   this->send_current_setpoint_(0.0f);
   this->transition_(FINISHING);
@@ -186,9 +191,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (frame.data.size() >= 11) {
         this->chargebox_firmware_ = static_cast<uint16_t>(std::strtoul(frame.data.substr(7, 4).c_str(), nullptr, 10));
       }
+      if (frame.data.size() >= 15) {
+        this->chargebox_hardware_generation_ = static_cast<uint8_t>(std::strtoul(frame.data.substr(11, 4).c_str(), nullptr, 10));
+      }
       this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
-      ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u", this->chargebox_serial_.c_str(),
-               this->chargebox_address_, this->chargebox_firmware_);
+      ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u hw_gen=%u profile=%s",
+               this->chargebox_serial_.c_str(), this->chargebox_address_, this->chargebox_firmware_,
+               this->chargebox_hardware_generation_, this->protocol_profile_name_());
       this->transition_(ASSIGN_ADDRESS);
       this->send_packet_(ADDR_BROADCAST, 0x11, this->chargebox_serial_ + hex_byte(this->chargebox_address_) + "03");
       this->transition_(READ_INFO);
@@ -215,6 +224,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       // for local authorisation/start commands.
       this->transition_(IDLE);
       break;
+    case FrameType::HEARTBEAT:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        this->chargebox_address_ = frame.src;
+        this->evbox_online_ = true;
+        this->last_heartbeat_rx_ms_ = millis();
+        ESP_LOGI(TAG, "CB heartbeat cmd21 received; sending ACK");
+        this->send_packet_(frame.src, 0x21, "");
+        this->last_heartbeat_tx_ms_ = millis();
+      }
+      break;
     case FrameType::AUTHENTICATE_CARD:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         this->chargebox_address_ = frame.src;
@@ -224,9 +243,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const size_t available = frame.data.size() > 4 ? frame.data.size() - 4 : 0;
         const size_t safe_len = std::min<size_t>(card_len, available);
         const std::string card = frame.data.substr(4, safe_len);
-        const bool charge_flow_allowed = this->state_ == AUTHORIZED || this->state_ == STARTING ||
-                                         this->state_ == SESSION_STARTING || this->state_ == CHARGING;
-        const bool access_granted = !this->stop_requested_ && (card == "000000AS" || charge_flow_allowed);
+        const bool access_granted = !this->stop_requested_ &&
+                                    (this->charge_flow_requested_() || (!this->commissioning_mode_ && card == "000000AS"));
         ESP_LOGI(TAG, "CB authenticate request state=0x%02X card=%s access=%s", auth_state, card.c_str(),
                  access_granted ? "granted" : "denied");
         const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
@@ -243,10 +261,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->evbox_online_ = true;
         const uint8_t request_code = parse_hex_byte(frame.data, 0);
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
-        const bool charge_flow_allowed = this->session_active_ || this->state_ == AUTHORIZED ||
-                                         this->state_ == STARTING || this->state_ == SESSION_STARTING ||
-                                         this->state_ == CHARGING;
-        if (!this->stop_requested_ && charge_flow_allowed) {
+        ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X", request_code);
+        if (!this->is_supported_current_request_(request_code)) {
+          ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
+          break;
+        }
+        if (!this->stop_requested_ && this->charge_flow_requested_()) {
           if (request_code == 0x81) {
             this->session_active_ = true;
             this->transition_(CHARGING);
@@ -265,7 +285,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         ESP_LOGD(TAG, "CB acknowledged current setpoint");
-        if (!this->stop_requested_ && (this->state_ == STARTING || this->state_ == AUTHORIZED)) {
+        if (!this->stop_requested_ && this->charge_flow_requested_() &&
+            (this->state_ == STARTING || this->state_ == AUTHORIZED)) {
           this->transition_(SESSION_STARTING);
         }
       }
@@ -284,6 +305,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (code == 0x02) {
           this->stop_requested_ = false;
           this->session_active_ = false;
+          this->start_requested_ = false;
           this->transition_(IDLE);
         } else if (code == 0x17) {
           if (this->stop_requested_) {
@@ -334,11 +356,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::METERING_START:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        this->session_active_ = !this->stop_requested_;
-        if (!this->stop_requested_) {
+        const bool accept_session = !this->stop_requested_ && this->charge_flow_requested_();
+        this->session_active_ = accept_session;
+        if (accept_session) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
           this->have_session_start_meter_ = this->meter_value_kwh_ > 0.0f;
           this->transition_(SESSION_STARTING);
+        } else {
+          ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; no start requested");
         }
         const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                  : std::string("01") + hex_dword(this->session_);
@@ -655,9 +680,36 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
   ESP_LOGI(TAG, "CB autostart config is 0x%02X; config unchanged", auto_start);
 }
 
-void EvboxMaxComponent::send_heartbeat_() {
+void EvboxMaxComponent::send_periodic_cmd18_() {
   if (this->chargebox_address_ == 0) return;
+  ESP_LOGD(TAG, "Sending periodic cmd18 status poll; function still marked TE_TESTEN");
   this->send_status_update_request_();
+}
+
+bool EvboxMaxComponent::charge_flow_requested_() const {
+  return this->start_requested_ || this->session_active_ || this->state_ == STARTING ||
+         this->state_ == SESSION_STARTING || this->state_ == CHARGING;
+}
+
+bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
+  if (this->chargebox_hardware_generation_ != 3) return false;
+  switch (code) {
+    case 0xA7:
+    case 0x81:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const char *EvboxMaxComponent::protocol_profile_name_() const {
+  switch (this->chargebox_hardware_generation_) {
+    case 2: return "MAX_PROFILE_G2";
+    case 3: return "MAX_PROFILE_G3";
+    case 4: return "MAX_PROFILE_G4";
+    case 0: return "MAX_PROFILE_UNKNOWN";
+    default: return "MAX_PROFILE_UNSUPPORTED";
+  }
 }
 
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
@@ -694,6 +746,18 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->communication_text_sensor_ != nullptr) {
     this->communication_text_sensor_->publish_state(this->communication_name_());
+  }
+  if (this->protocol_profile_text_sensor_ != nullptr) {
+    this->protocol_profile_text_sensor_->publish_state(this->protocol_profile_name_());
+  }
+  if (this->cb_serial_text_sensor_ != nullptr) {
+    this->cb_serial_text_sensor_->publish_state(this->chargebox_serial_);
+  }
+  if (this->cb_firmware_sensor_ != nullptr) {
+    this->cb_firmware_sensor_->publish_state(this->chargebox_firmware_);
+  }
+  if (this->cb_hardware_generation_sensor_ != nullptr) {
+    this->cb_hardware_generation_sensor_->publish_state(this->chargebox_hardware_generation_);
   }
   if (this->ev_current_sensor_ != nullptr) {
     this->ev_current_sensor_->publish_state(this->inputs_.ev_current);

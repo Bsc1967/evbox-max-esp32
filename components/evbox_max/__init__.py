@@ -41,6 +41,11 @@ CONF_POWER = "power"
 CONF_SESSION_ENERGY = "session_energy"
 CONF_METER_VALUE = "meter_value"
 CONF_COMMUNICATION_STATUS = "communication_status"
+CONF_PROTOCOL_PROFILE = "protocol_profile"
+CONF_CB_SERIAL = "cb_serial"
+CONF_CB_FIRMWARE = "cb_firmware"
+CONF_CB_HARDWARE_GENERATION = "cb_hardware_generation"
+CONF_COMMISSIONING_MODE = "commissioning_mode"
 CONF_RS485_DE_PIN = "rs485_de_pin"
 CONF_CHARGE_PHASES = "charge_phases"
 CONF_CHARGER_BREAKER_CURRENT = "charger_breaker_current"
@@ -87,6 +92,7 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_HEARTBEAT_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_WATCHDOG_TIMEOUT, default="30s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_COMMISSIONING_MODE, default=True): cv.boolean,
         cv.Optional(CONF_RS485_DE_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RELAY_EVBOX_KNOWN_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RELAY_JANITZA_OK_PIN): pins.gpio_output_pin_schema,
@@ -95,6 +101,16 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_STATE): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_PROTOCOL_PROFILE): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CB_SERIAL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CB_FIRMWARE): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CB_HARDWARE_GENERATION): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
         cv.Optional(CONF_EV_CURRENT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
@@ -224,6 +240,7 @@ async def to_code(config):
     cg.add(var.set_failsafe_mode(config[CONF_FAILSAFE_MODE]))
     cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
     cg.add(var.set_watchdog_timeout(config[CONF_WATCHDOG_TIMEOUT]))
+    cg.add(var.set_commissioning_mode(config[CONF_COMMISSIONING_MODE]))
 
     if CONF_RS485_DE_PIN in config:
         pin = await cg.gpio_pin_expression(config[CONF_RS485_DE_PIN])
@@ -250,6 +267,18 @@ async def to_code(config):
     if CONF_COMMUNICATION_STATUS in config:
         sens = await text_sensor.new_text_sensor(config[CONF_COMMUNICATION_STATUS])
         cg.add(var.set_communication_text_sensor(sens))
+    if CONF_PROTOCOL_PROFILE in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_PROTOCOL_PROFILE])
+        cg.add(var.set_protocol_profile_text_sensor(sens))
+    if CONF_CB_SERIAL in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_CB_SERIAL])
+        cg.add(var.set_cb_serial_text_sensor(sens))
+    if CONF_CB_FIRMWARE in config:
+        sens = await sensor.new_sensor(config[CONF_CB_FIRMWARE])
+        cg.add(var.set_cb_firmware_sensor(sens))
+    if CONF_CB_HARDWARE_GENERATION in config:
+        sens = await sensor.new_sensor(config[CONF_CB_HARDWARE_GENERATION])
+        cg.add(var.set_cb_hardware_generation_sensor(sens))
     if CONF_EV_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_EV_CURRENT])
         cg.add(var.set_ev_current_sensor(sens))
