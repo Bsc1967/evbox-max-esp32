@@ -301,8 +301,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->have_last_current_request_code_ = true;
         this->last_current_request_ms_ = millis();
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
-        ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
-                 this->current_request_name_(request_code));
+        if (frame.data.size() >= 4) {
+          const uint8_t request_value = parse_hex_byte(frame.data, 2);
+          ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s value=0x%02X", request_code,
+                   this->current_request_name_(request_code), request_value);
+        } else {
+          ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
+                   this->current_request_name_(request_code));
+        }
         if (!this->is_supported_current_request_(request_code)) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
           break;
@@ -874,6 +880,7 @@ const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
     case 0x20: return "UNKNOWN_20";
     case 0x28: return "UNKNOWN_28";
     case 0x2F: return "UNKNOWN_2F";
+    case 0x30: return "CONNECTED_WAITING";
     case 0x80: return "UNPLUGGED";
     case 0x81: return "CHARGING";
     case 0xA0: return "AVAILABLE";
