@@ -413,6 +413,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
             this->transition_(STARTING);
           }
+        } else if (!this->stop_requested_ && this->start_requested_) {
+          ESP_LOGW(TAG, "Remote start failed; trying direct cmd6B start current once");
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          this->send_current_setpoint_(this->desired_current_);
+          this->transition_(SESSION_STARTING);
         }
       }
       break;
