@@ -213,11 +213,14 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool have_last_cb_status_code_{false};
   uint8_t last_current_request_code_{0};
   bool have_last_current_request_code_{false};
+  uint32_t last_current_request_ms_{0};
   uint32_t last_heartbeat_rx_ms_{0};
   uint32_t last_heartbeat_tx_ms_{0};
   uint32_t last_publish_ms_{0};
   uint32_t startup_step_due_ms_{0};
   uint8_t startup_step_{0};
+  bool startup_config_received_{false};
+  uint32_t last_startup_sync_request_ms_{0};
   std::string pending_config_34_ {};
   ESPPreferenceObject settings_pref_{};
   bool janitza_online_{false};

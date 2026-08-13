@@ -19,8 +19,11 @@ void EvboxMaxComponent::setup() {
   this->load_settings_();
   this->last_current_request_code_ = 0;
   this->have_last_current_request_code_ = false;
+  this->last_current_request_ms_ = 0;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
+  this->startup_config_received_ = false;
+  this->last_startup_sync_request_ms_ = 0;
   if (this->rs485_de_pin_ != nullptr) {
     this->rs485_de_pin_->setup();
     // MAX3485 is half-duplex. Keep the driver disabled by default so the
@@ -64,6 +67,12 @@ void EvboxMaxComponent::loop() {
     // Periodic cmd18 is a status poll used by the current captures. It is kept
     // separate from the real MAX heartbeat cmd21, which is only sent as ACK.
     this->send_periodic_cmd18_();
+    if (!this->startup_config_received_ && this->startup_step_ == 0 &&
+        (this->last_startup_sync_request_ms_ == 0 || now - this->last_startup_sync_request_ms_ >= 30000UL)) {
+      ESP_LOGI(TAG, "Startup sync not complete; retrying config/status sync for CB 0x%02X", this->chargebox_address_);
+      this->last_startup_sync_request_ms_ = now;
+      this->schedule_startup_step_(1, 100);
+    }
     if (!this->stop_requested_ && this->charge_flow_requested_() && this->current_setpoint_allowed_()) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
@@ -220,6 +229,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_hardware_generation_ = static_cast<uint8_t>(std::strtoul(frame.data.substr(11, 4).c_str(), nullptr, 10));
       }
       this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
+      this->startup_config_received_ = false;
+      this->last_startup_sync_request_ms_ = millis();
       ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u hw_gen=%u profile=%s",
                this->chargebox_serial_.c_str(), this->chargebox_address_, this->chargebox_firmware_,
                this->chargebox_hardware_generation_, this->protocol_profile_name_());
@@ -236,6 +247,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::CONFIG_RESPONSE:
       ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve meter settings");
+      this->startup_config_received_ = true;
       this->log_autostart_config_(frame.data);
       this->transition_(IDLE);
       break;
@@ -287,6 +299,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t request_code = parse_hex_byte(frame.data, 0);
         this->last_current_request_code_ = request_code;
         this->have_last_current_request_code_ = true;
+        this->last_current_request_ms_ = millis();
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
         ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
                  this->current_request_name_(request_code));
@@ -688,8 +701,11 @@ void EvboxMaxComponent::note_chargebox_seen_(uint8_t address) {
   if (address == 0 || address > 20) return;
   const bool first_seen_after_boot = this->chargebox_address_ == 0;
   this->chargebox_address_ = address;
-  if (first_seen_after_boot && this->startup_step_ == 0) {
-    ESP_LOGI(TAG, "ChargeBox already active at 0x%02X; running startup sync", address);
+  if (!this->startup_config_received_ && this->startup_step_ == 0 &&
+      (this->last_startup_sync_request_ms_ == 0 || millis() - this->last_startup_sync_request_ms_ >= 10000UL)) {
+    ESP_LOGI(TAG, "%s at 0x%02X; running startup sync",
+             first_seen_after_boot ? "ChargeBox already active" : "ChargeBox live frame seen", address);
+    this->last_startup_sync_request_ms_ = millis();
     this->schedule_startup_step_(1, 100);
   }
 }
@@ -919,7 +935,7 @@ void EvboxMaxComponent::publish_() {
     }
   }
   if (this->current_request_state_text_sensor_ != nullptr) {
-    if (this->have_last_current_request_code_) {
+    if (this->have_last_current_request_code_ && this->last_current_request_ms_ != 0) {
       this->current_request_state_text_sensor_->publish_state(
           std::string(this->current_request_name_(this->last_current_request_code_)) + " 0x" +
           hex_byte(this->last_current_request_code_));
