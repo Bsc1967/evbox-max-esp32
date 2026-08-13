@@ -57,8 +57,12 @@ void EvboxMaxComponent::loop() {
 
   const uint32_t now = millis();
   if (this->state_ == FAULT && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
-    ESP_LOGI(TAG, "EVBox bus silent in FAULT; requesting registration restart");
-    this->send_restart_registration_();
+    if (now - this->last_rx_ms_ > this->watchdog_timeout_ms_) {
+      ESP_LOGI(TAG, "EVBox bus silent in FAULT; requesting registration restart");
+      this->send_restart_registration_();
+    } else {
+      ESP_LOGW(TAG, "EVBox reports FAULT but bus is alive; holding communication state without registration restart");
+    }
     this->last_periodic_cmd18_ms_ = now;
   } else if (this->chargebox_address_ == 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
     this->send_restart_registration_();
@@ -408,7 +412,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ms_ = 0;
           this->transition_(FINISHING);
         }
-        else if (code == 0x0A) this->transition_(FAULT);
+        else if (code == 0x0A) {
+          this->startup_step_ = 0;
+          this->start_requested_ = false;
+          this->session_active_ = false;
+          this->current_start_released_ = false;
+          this->start_requested_ms_ = 0;
+          this->transition_(FAULT);
+        }
         if (frame.data.size() >= 128) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
           if (raw_limit > 0 && raw_limit <= 320) {
