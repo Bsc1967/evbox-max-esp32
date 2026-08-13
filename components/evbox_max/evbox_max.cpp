@@ -89,7 +89,8 @@ void EvboxMaxComponent::loop() {
       this->start_requested_ = false;
       this->current_start_released_ = false;
       if (!this->stop_requested_ && this->state_ != CHARGING) {
-        this->transition_(this->state_ == STARTING || this->state_ == SESSION_STARTING ? AUTHORIZED : this->state_);
+        this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING
+                                                                                                  : this->state_);
       }
     }
     this->last_periodic_cmd18_ms_ = now;
@@ -213,7 +214,7 @@ void EvboxMaxComponent::start_session() {
       this->start_requested_ms_ = 0;
       this->transition_(CHARGING);
     } else {
-      this->transition_(SESSION_STARTING);
+      this->transition_(STARTING);
     }
   }
 }
@@ -341,7 +342,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->start_requested_ = false;
             this->start_requested_ms_ = 0;
             this->transition_(CHARGING);
-          } else if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
+          } else if (this->state_ != CHARGING && this->state_ != STARTING) {
             this->transition_(STARTING);
           }
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
@@ -356,10 +357,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         ESP_LOGD(TAG, "CB acknowledged current setpoint");
-        if (!this->stop_requested_ && this->charge_flow_requested_() &&
-            (this->state_ == STARTING || this->state_ == AUTHORIZED)) {
-          this->transition_(SESSION_STARTING);
-        }
+        // A cmd6B ACK only confirms that the current setpoint was accepted on
+        // the MAX bus. The CB session starts only when cmd23 or CHARGING state
+        // follows, so keep the controller in STARTING until the CB proves it.
       }
       break;
     case FrameType::STATE_UPDATE:
@@ -401,7 +401,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->session_active_ = false;
             this->current_start_released_ = true;
             send_current_after_state_ack = true;
-            this->transition_(SESSION_STARTING);
+            this->transition_(STARTING);
           } else {
             this->session_active_ = false;
             this->transition_(PREPARING);
@@ -475,7 +475,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           ESP_LOGW(TAG, "Remote start failed; trying direct cmd6B start current once");
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           this->send_current_setpoint_(this->desired_current_);
-          this->transition_(SESSION_STARTING);
+          this->transition_(STARTING);
         }
       }
       break;
