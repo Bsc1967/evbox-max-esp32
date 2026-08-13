@@ -373,6 +373,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t cable_current = parse_hex_byte(frame.data, 12);
         this->last_cb_status_code_ = code;
         this->have_last_cb_status_code_ = true;
+        bool send_current_after_state_ack = false;
         ESP_LOGI(TAG, "CB state cmd26 status=0x%02X %s is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
                  code, this->cb_status_name_(code), is_charging, led_colour, lock_state, cable_current,
                  static_cast<unsigned>(frame.data.size()));
@@ -398,6 +399,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(FINISHING);
           } else if (this->start_requested_) {
             this->session_active_ = false;
+            this->current_start_released_ = true;
+            send_current_after_state_ack = true;
             this->transition_(SESSION_STARTING);
           } else {
             this->session_active_ = false;
@@ -452,6 +455,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const std::string ack_data = this->chargebox_firmware_ > 100 ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                      : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
+        if (send_current_after_state_ack) {
+          ESP_LOGI(TAG, "CB is preparing with start requested; sending current limit after cmd26 ACK");
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          this->send_current_setpoint_(this->desired_current_);
+        }
       }
       break;
     case FrameType::REMOTE_START:
