@@ -64,6 +64,8 @@ FrameType frame_type_for_cmd(uint8_t cmd) {
     case 0x23: return FrameType::METERING_START;
     case 0x24: return FrameType::METERING_END;
     case 0x26: return FrameType::STATE_UPDATE;
+    case 0x31: return FrameType::REMOTE_START;
+    case 0x32: return FrameType::REMOTE_STOP;
     case 0x33: return FrameType::CONFIG_RESPONSE;
     case 0x34: return FrameType::CONFIG_SET_RESPONSE;
     case 0x65: return FrameType::METER_UPDATE_INTERVAL;
@@ -145,4 +147,3 @@ void FrameParser::reset() {
 
 }  // namespace evbox_max
 }  // namespace esphome
-

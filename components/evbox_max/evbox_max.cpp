@@ -17,6 +17,10 @@ static constexpr uint16_t SETTINGS_VERSION = 1;
 void EvboxMaxComponent::setup() {
   this->settings_pref_ = global_preferences->make_preference<StoredSettings>(fnv1_hash("evbox_max_settings"));
   this->load_settings_();
+  this->last_current_request_code_ = 0;
+  this->have_last_current_request_code_ = false;
+  this->last_cb_status_code_ = 0;
+  this->have_last_cb_status_code_ = false;
   if (this->rs485_de_pin_ != nullptr) {
     this->rs485_de_pin_->setup();
     // MAX3485 is half-duplex. Keep the driver disabled by default so the
@@ -180,7 +184,8 @@ void EvboxMaxComponent::start_session() {
   this->session_active_ = false;
   this->current_start_released_ = false;
   this->start_requested_ms_ = millis();
-  this->transition_(AUTHORIZED);
+  this->transition_(STARTING);
+  this->send_remote_start_();
 }
 
 void EvboxMaxComponent::stop_session() {
@@ -190,6 +195,7 @@ void EvboxMaxComponent::stop_session() {
   this->current_start_released_ = false;
   this->start_requested_ms_ = 0;
   this->send_current_setpoint_(0.0f);
+  this->send_remote_stop_();
   this->transition_(FINISHING);
 }
 
@@ -396,6 +402,24 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const std::string ack_data = this->chargebox_firmware_ > 100 ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                      : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
+      }
+      break;
+    case FrameType::REMOTE_START:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        const uint8_t result = parse_hex_byte(frame.data, 0);
+        ESP_LOGI(TAG, "CB remote start response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
+        if (result == 0x01 && !this->stop_requested_) {
+          this->start_requested_ = true;
+          if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
+            this->transition_(STARTING);
+          }
+        }
+      }
+      break;
+    case FrameType::REMOTE_STOP:
+      if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+        const uint8_t result = parse_hex_byte(frame.data, 0);
+        ESP_LOGI(TAG, "CB remote stop response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
       }
       break;
     case FrameType::METERING_START:
@@ -732,6 +756,22 @@ void EvboxMaxComponent::send_status_update_request_() {
 void EvboxMaxComponent::send_meter_update_interval_() {
   if (this->chargebox_address_ == 0) return;
   this->send_packet_(this->chargebox_address_, 0x65, "000F");
+}
+
+void EvboxMaxComponent::send_remote_start_() {
+  if (this->chargebox_address_ == 0) {
+    ESP_LOGW(TAG, "Remote start requested before ChargeBox address is known");
+    return;
+  }
+  const std::string card = (std::string("000000AS") + std::string(22, '0')).substr(0, 22);
+  ESP_LOGI(TAG, "Sending remote start cmd31 to CB");
+  this->send_packet_(this->chargebox_address_, 0x31, std::string("08") + card);
+}
+
+void EvboxMaxComponent::send_remote_stop_() {
+  if (this->chargebox_address_ == 0) return;
+  ESP_LOGI(TAG, "Sending remote stop cmd32 to CB");
+  this->send_packet_(this->chargebox_address_, 0x32, hex_dword(this->session_));
 }
 
 void EvboxMaxComponent::log_autostart_config_(const std::string &config) {

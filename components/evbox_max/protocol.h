@@ -23,6 +23,8 @@ enum class FrameType : uint8_t {
   AUTHENTICATE_CARD = 0x22,
   METER_UPDATE_INTERVAL = 0x65,
   STATE_UPDATE = 0x26,
+  REMOTE_START = 0x31,
+  REMOTE_STOP = 0x32,
   CURRENT_REQUEST = 0x6A,
   CURRENT_SETPOINT = 0x6B,
   METERING_START = 0x23,
@@ -65,4 +67,3 @@ class FrameParser {
 
 }  // namespace evbox_max
 }  // namespace esphome
-

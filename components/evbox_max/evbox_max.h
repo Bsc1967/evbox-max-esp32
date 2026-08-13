@@ -148,6 +148,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_status_update_request_();
   void send_periodic_cmd18_();
   void send_meter_update_interval_();
+  void send_remote_start_();
+  void send_remote_stop_();
   void log_autostart_config_(const std::string &config);
   void send_current_setpoint_(float amps);
   bool charge_flow_requested_() const;
