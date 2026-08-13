@@ -356,6 +356,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
+          } else if (this->start_requested_) {
+            this->session_active_ = false;
+            this->transition_(SESSION_STARTING);
           } else {
             this->session_active_ = false;
             this->transition_(PREPARING);
@@ -801,7 +804,8 @@ bool EvboxMaxComponent::charge_flow_requested_() const {
 }
 
 bool EvboxMaxComponent::current_setpoint_allowed_() const {
-  return this->current_start_released_ || this->session_active_ || this->state_ == CHARGING;
+  return this->current_start_released_ || this->session_active_ || this->state_ == SESSION_STARTING ||
+         this->state_ == CHARGING;
 }
 
 bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
@@ -910,7 +914,7 @@ void EvboxMaxComponent::publish_() {
           std::string(this->current_request_name_(this->last_current_request_code_)) + " 0x" +
           hex_byte(this->last_current_request_code_));
     } else {
-      this->current_request_state_text_sensor_->publish_state("UNKNOWN");
+      this->current_request_state_text_sensor_->publish_state("NO_REQUEST");
     }
   }
   if (this->cb_firmware_sensor_ != nullptr) {
