@@ -60,9 +60,20 @@ void EvboxMaxComponent::loop() {
     // Periodic cmd18 is a status poll used by the current captures. It is kept
     // separate from the real MAX heartbeat cmd21, which is only sent as ACK.
     this->send_periodic_cmd18_();
-    if (!this->stop_requested_ && this->charge_flow_requested_()) {
+    if (!this->stop_requested_ && this->charge_flow_requested_() && this->current_setpoint_allowed_()) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
       this->send_current_setpoint_(this->desired_current_);
+    }
+    if (this->start_requested_ && !this->session_active_ && this->start_requested_ms_ != 0 &&
+        now - this->start_requested_ms_ >= 60000UL) {
+      ESP_LOGW(TAG, "Start request timed out; last cmd26=%s last cmd6A=%s",
+               this->have_last_cb_status_code_ ? this->cb_status_name_(this->last_cb_status_code_) : "UNKNOWN",
+               this->have_last_current_request_code_ ? this->current_request_name_(this->last_current_request_code_) : "UNKNOWN");
+      this->start_requested_ = false;
+      this->current_start_released_ = false;
+      if (!this->stop_requested_ && this->state_ != CHARGING) {
+        this->transition_(this->state_ == STARTING || this->state_ == SESSION_STARTING ? AUTHORIZED : this->state_);
+      }
     }
     this->last_periodic_cmd18_ms_ = now;
   }
@@ -166,7 +177,9 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 void EvboxMaxComponent::start_session() {
   this->stop_requested_ = false;
   this->start_requested_ = true;
-  this->session_active_ = true;
+  this->session_active_ = false;
+  this->current_start_released_ = false;
+  this->start_requested_ms_ = millis();
   this->transition_(AUTHORIZED);
 }
 
@@ -174,6 +187,8 @@ void EvboxMaxComponent::stop_session() {
   this->stop_requested_ = true;
   this->start_requested_ = false;
   this->session_active_ = false;
+  this->current_start_released_ = false;
+  this->start_requested_ms_ = 0;
   this->send_current_setpoint_(0.0f);
   this->transition_(FINISHING);
 }
@@ -264,15 +279,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->chargebox_address_ = frame.src;
         this->evbox_online_ = true;
         const uint8_t request_code = parse_hex_byte(frame.data, 0);
+        this->last_current_request_code_ = request_code;
+        this->have_last_current_request_code_ = true;
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
-        ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X", request_code);
+        ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
+                 this->current_request_name_(request_code));
         if (!this->is_supported_current_request_(request_code)) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
           break;
         }
         if (!this->stop_requested_ && this->charge_flow_requested_()) {
+          this->current_start_released_ = true;
           if (request_code == 0x81) {
             this->session_active_ = true;
+            this->start_requested_ = false;
+            this->start_requested_ms_ = 0;
             this->transition_(CHARGING);
           } else if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
             this->transition_(STARTING);
@@ -304,12 +325,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t led_colour = parse_hex_byte(frame.data, 8);
         const uint8_t lock_state = parse_hex_byte(frame.data, 10);
         const uint8_t cable_current = parse_hex_byte(frame.data, 12);
-        ESP_LOGI(TAG, "CB state cmd26 status=0x%02X is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
-                 code, is_charging, led_colour, lock_state, cable_current, static_cast<unsigned>(frame.data.size()));
+        this->last_cb_status_code_ = code;
+        this->have_last_cb_status_code_ = true;
+        ESP_LOGI(TAG, "CB state cmd26 status=0x%02X %s is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
+                 code, this->cb_status_name_(code), is_charging, led_colour, lock_state, cable_current,
+                 static_cast<unsigned>(frame.data.size()));
         if (code == 0x02) {
           this->stop_requested_ = false;
           this->session_active_ = false;
           this->start_requested_ = false;
+          this->current_start_released_ = false;
+          this->start_requested_ms_ = 0;
           this->transition_(IDLE);
         } else if (code == 0x17) {
           if (this->stop_requested_) {
@@ -317,27 +343,41 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(FINISHING);
           } else {
             this->session_active_ = false;
-            this->transition_(AUTHORIZED);
+            this->transition_(PREPARING);
           }
         }
-        else if (code == 0x47 || code == 0x4A) {
+        else if (code == 0x47) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
-          } else if (this->state_ == SESSION_STARTING || this->state_ == CHARGING) {
-            this->transition_(SESSION_STARTING);
-          } else if (this->state_ == STARTING) {
-            this->transition_(STARTING);
           } else {
+            this->session_active_ = false;
+            this->transition_(PREPARING);
+          }
+        }
+        else if (code == 0x4A) {
+          if (this->stop_requested_) {
+            this->session_active_ = false;
+            this->transition_(FINISHING);
+          } else if (this->start_requested_) {
             this->transition_(AUTHORIZED);
+          } else {
+            this->session_active_ = false;
+            this->transition_(IDLE);
           }
         }
         else if (code == 0x48) {
           this->stop_requested_ = false;
           this->session_active_ = true;
+          this->start_requested_ = false;
+          this->current_start_released_ = true;
+          this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
           this->session_active_ = false;
+          this->start_requested_ = false;
+          this->current_start_released_ = false;
+          this->start_requested_ms_ = 0;
           this->transition_(FINISHING);
         }
         else if (code == 0x0A) this->transition_(FAULT);
@@ -365,6 +405,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (accept_session) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
           this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
+          this->current_start_released_ = true;
           this->transition_(SESSION_STARTING);
         } else {
           ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; no start requested");
@@ -377,6 +418,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::METERING_END:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         this->session_active_ = false;
+        this->start_requested_ = false;
+        this->current_start_released_ = false;
+        this->start_requested_ms_ = 0;
         this->send_packet_(frame.src, 0x24, "01");
       }
       break;
@@ -711,6 +755,10 @@ bool EvboxMaxComponent::charge_flow_requested_() const {
          this->state_ == SESSION_STARTING || this->state_ == CHARGING;
 }
 
+bool EvboxMaxComponent::current_setpoint_allowed_() const {
+  return this->current_start_released_ || this->session_active_ || this->state_ == CHARGING;
+}
+
 bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
   if (this->chargebox_hardware_generation_ != 3) return false;
   switch (code) {
@@ -729,6 +777,35 @@ const char *EvboxMaxComponent::protocol_profile_name_() const {
     case 4: return "MAX_PROFILE_G4";
     case 0: return "MAX_PROFILE_UNKNOWN";
     default: return "MAX_PROFILE_UNSUPPORTED";
+  }
+}
+
+const char *EvboxMaxComponent::cb_status_name_(uint8_t code) const {
+  switch (code) {
+    case 0x02: return "AVAILABLE";
+    case 0x0A: return "ERROR";
+    case 0x17: return "IN_USE_G2";
+    case 0x47: return "PREPARING_G3";
+    case 0x48: return "CHARGING_G3";
+    case 0x4A: return "READY_G3";
+    case 0x4B: return "FINISHED_G3";
+    default: return "UNKNOWN";
+  }
+}
+
+const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
+  switch (code) {
+    case 0x07: return "UNKNOWN_07";
+    case 0x20: return "UNKNOWN_20";
+    case 0x28: return "UNKNOWN_28";
+    case 0x2F: return "UNKNOWN_2F";
+    case 0x80: return "UNPLUGGED";
+    case 0x81: return "CHARGING";
+    case 0xA0: return "AVAILABLE";
+    case 0xA7: return "READY";
+    case 0xC1: return "FINISHED";
+    case 0xE7: return "FAILED";
+    default: return "UNKNOWN";
   }
 }
 
@@ -759,7 +836,8 @@ void EvboxMaxComponent::watchdog_() {
 
 void EvboxMaxComponent::publish_() {
   if (this->status_text_sensor_ != nullptr) {
-    this->status_text_sensor_->publish_state(this->session_active_ ? "Session active" : "Ready");
+    this->status_text_sensor_->publish_state(this->session_active_ ? "Session active" :
+                                            (this->start_requested_ ? "Start requested" : "Ready"));
   }
   if (this->state_text_sensor_ != nullptr) {
     this->state_text_sensor_->publish_state(this->state_name_());
@@ -772,6 +850,23 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->cb_serial_text_sensor_ != nullptr) {
     this->cb_serial_text_sensor_->publish_state(this->chargebox_serial_);
+  }
+  if (this->cb_status_detail_text_sensor_ != nullptr) {
+    if (this->have_last_cb_status_code_) {
+      this->cb_status_detail_text_sensor_->publish_state(std::string(this->cb_status_name_(this->last_cb_status_code_)) +
+                                                         " 0x" + hex_byte(this->last_cb_status_code_));
+    } else {
+      this->cb_status_detail_text_sensor_->publish_state("UNKNOWN");
+    }
+  }
+  if (this->current_request_state_text_sensor_ != nullptr) {
+    if (this->have_last_current_request_code_) {
+      this->current_request_state_text_sensor_->publish_state(
+          std::string(this->current_request_name_(this->last_current_request_code_)) + " 0x" +
+          hex_byte(this->last_current_request_code_));
+    } else {
+      this->current_request_state_text_sensor_->publish_state("UNKNOWN");
+    }
   }
   if (this->cb_firmware_sensor_ != nullptr) {
     this->cb_firmware_sensor_->publish_state(this->chargebox_firmware_);
@@ -849,6 +944,7 @@ const char *EvboxMaxComponent::state_name_() const {
     case READ_INFO: return "READ_INFO";
     case READ_CONFIG: return "READ_CONFIG";
     case IDLE: return "IDLE";
+    case PREPARING: return "PREPARING";
     case AUTHORIZED: return "AUTHORIZED";
     case STARTING: return "STARTING";
     case SESSION_STARTING: return "SESSION_STARTING";

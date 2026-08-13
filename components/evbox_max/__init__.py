@@ -43,6 +43,8 @@ CONF_METER_VALUE = "meter_value"
 CONF_COMMUNICATION_STATUS = "communication_status"
 CONF_PROTOCOL_PROFILE = "protocol_profile"
 CONF_CB_SERIAL = "cb_serial"
+CONF_CB_STATUS_DETAIL = "cb_status_detail"
+CONF_CURRENT_REQUEST_STATE = "current_request_state"
 CONF_CB_FIRMWARE = "cb_firmware"
 CONF_CB_HARDWARE_GENERATION = "cb_hardware_generation"
 CONF_COMMISSIONING_MODE = "commissioning_mode"
@@ -103,6 +105,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_PROTOCOL_PROFILE): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_CB_SERIAL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CB_STATUS_DETAIL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CURRENT_REQUEST_STATE): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_CB_FIRMWARE): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class="measurement",
@@ -216,7 +220,7 @@ CONFIG_SCHEMA = cv.Schema(
             state_class="total_increasing",
         ),
         cv.Optional(CONF_TEMPERATURE): sensor.sensor_schema(
-            unit_of_measurement="??C",
+            unit_of_measurement="Â°C",
             accuracy_decimals=1,
             device_class="temperature",
             state_class="measurement",
@@ -273,6 +277,12 @@ async def to_code(config):
     if CONF_CB_SERIAL in config:
         sens = await text_sensor.new_text_sensor(config[CONF_CB_SERIAL])
         cg.add(var.set_cb_serial_text_sensor(sens))
+    if CONF_CB_STATUS_DETAIL in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_CB_STATUS_DETAIL])
+        cg.add(var.set_cb_status_detail_text_sensor(sens))
+    if CONF_CURRENT_REQUEST_STATE in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_CURRENT_REQUEST_STATE])
+        cg.add(var.set_current_request_state_text_sensor(sens))
     if CONF_CB_FIRMWARE in config:
         sens = await sensor.new_sensor(config[CONF_CB_FIRMWARE])
         cg.add(var.set_cb_firmware_sensor(sens))
@@ -339,4 +349,3 @@ async def to_code(config):
     if CONF_TEMPERATURE in config:
         sens = await sensor.new_sensor(config[CONF_TEMPERATURE])
         cg.add(var.set_temperature_sensor(sens))
-

@@ -20,6 +20,7 @@ enum EvboxState : uint8_t {
   READ_INFO,
   READ_CONFIG,
   IDLE,
+  PREPARING,
   AUTHORIZED,
   STARTING,
   SESSION_STARTING,
@@ -78,6 +79,10 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
   void set_protocol_profile_text_sensor(text_sensor::TextSensor *sensor) { this->protocol_profile_text_sensor_ = sensor; }
   void set_cb_serial_text_sensor(text_sensor::TextSensor *sensor) { this->cb_serial_text_sensor_ = sensor; }
+  void set_cb_status_detail_text_sensor(text_sensor::TextSensor *sensor) { this->cb_status_detail_text_sensor_ = sensor; }
+  void set_current_request_state_text_sensor(text_sensor::TextSensor *sensor) {
+    this->current_request_state_text_sensor_ = sensor;
+  }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
   void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
   void set_desired_current_sensor(sensor::Sensor *sensor) { this->desired_current_sensor_ = sensor; }
@@ -146,8 +151,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void log_autostart_config_(const std::string &config);
   void send_current_setpoint_(float amps);
   bool charge_flow_requested_() const;
+  bool current_setpoint_allowed_() const;
   bool is_supported_current_request_(uint8_t code) const;
   const char *protocol_profile_name_() const;
+  const char *cb_status_name_(uint8_t code) const;
+  const char *current_request_name_(uint8_t code) const;
   uint32_t seconds_since_2000_() const;
   void watchdog_();
   void publish_();
@@ -168,6 +176,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool session_active_{false};
   bool stop_requested_{false};
   bool start_requested_{false};
+  bool current_start_released_{false};
   bool commissioning_mode_{true};
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
@@ -196,6 +205,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t watchdog_timeout_ms_{30000};
   uint32_t last_rx_ms_{0};
   uint32_t last_periodic_cmd18_ms_{0};
+  uint32_t start_requested_ms_{0};
+  uint8_t last_cb_status_code_{0};
+  bool have_last_cb_status_code_{false};
+  uint8_t last_current_request_code_{0};
+  bool have_last_current_request_code_{false};
   uint32_t last_heartbeat_rx_ms_{0};
   uint32_t last_heartbeat_tx_ms_{0};
   uint32_t last_publish_ms_{0};
@@ -210,6 +224,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *communication_text_sensor_{nullptr};
   text_sensor::TextSensor *protocol_profile_text_sensor_{nullptr};
   text_sensor::TextSensor *cb_serial_text_sensor_{nullptr};
+  text_sensor::TextSensor *cb_status_detail_text_sensor_{nullptr};
+  text_sensor::TextSensor *current_request_state_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
   sensor::Sensor *current_limit_sensor_{nullptr};
   sensor::Sensor *desired_current_sensor_{nullptr};
