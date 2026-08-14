@@ -61,7 +61,8 @@ void EvboxMaxComponent::loop() {
       ESP_LOGI(TAG, "EVBox bus silent in FAULT; requesting registration restart");
       this->send_restart_registration_();
     } else {
-      ESP_LOGW(TAG, "EVBox reports FAULT but bus is alive; holding communication state without registration restart");
+      ESP_LOGW(TAG, "EVBox reports FAULT but bus is alive; polling status without sending start/current commands");
+      this->send_status_update_request_();
     }
     this->last_periodic_cmd18_ms_ = now;
   } else if (this->chargebox_address_ == 0 && now - this->last_periodic_cmd18_ms_ >= this->heartbeat_interval_ms_) {
