@@ -200,8 +200,16 @@ void EvboxMaxComponent::start_session() {
   this->current_start_released_ = false;
   this->start_requested_ms_ = millis();
   this->transition_(STARTING);
-  this->send_remote_start_();
-  if (this->have_last_current_request_code_ &&
+  const bool cb_already_preparing = this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47;
+  if (cb_already_preparing) {
+    ESP_LOGI(TAG, "Start requested while CB is PREPARING_G3; using direct cmd6B current release");
+    this->current_start_released_ = true;
+    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+    this->send_current_setpoint_(this->desired_current_);
+  } else {
+    this->send_remote_start_();
+  }
+  if (!cb_already_preparing && this->have_last_current_request_code_ &&
       (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0xA7 ||
        this->last_current_request_code_ == 0x81)) {
     ESP_LOGI(TAG, "Start requested while CB current state is %s; sending current limit immediately",
@@ -473,7 +481,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; trying direct cmd6B start current once");
+          ESP_LOGW(TAG, "Remote start failed; continuing with direct cmd6B start current");
+          this->current_start_released_ = true;
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           this->send_current_setpoint_(this->desired_current_);
           this->transition_(STARTING);
