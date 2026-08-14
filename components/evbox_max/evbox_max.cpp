@@ -866,13 +866,23 @@ void EvboxMaxComponent::send_remote_stop_() {
 }
 
 void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
-  if (config.size() < 56) {
-    ESP_LOGW(TAG, "CB config too short to read autostart: len=%u", static_cast<unsigned>(config.size()));
+  ESP_LOGI(TAG, "CB config raw len=%u", static_cast<unsigned>(config.size()));
+  for (size_t offset = 0; offset < config.size(); offset += 64) {
+    ESP_LOGI(TAG, "CB config raw[%u..%u]=%s", static_cast<unsigned>(offset),
+             static_cast<unsigned>(std::min(offset + 64, config.size())), config.substr(offset, 64).c_str());
+  }
+
+  if (config.size() < 58) {
+    ESP_LOGW(TAG, "CB config too short to read suspected autostart byte: len=%u",
+             static_cast<unsigned>(config.size()));
     return;
   }
 
-  const uint8_t auto_start = parse_hex_byte(config, 54, 0x01);
-  ESP_LOGI(TAG, "CB autostart config is 0x%02X; config unchanged", auto_start);
+  const uint8_t byte_26 = parse_hex_byte(config, 52, 0xFF);
+  const uint8_t byte_27 = parse_hex_byte(config, 54, 0xFF);
+  const uint8_t byte_28 = parse_hex_byte(config, 56, 0xFF);
+  ESP_LOGI(TAG, "CB config suspected autostart window byte26=0x%02X byte27=0x%02X byte28=0x%02X; config unchanged",
+           byte_26, byte_27, byte_28);
 }
 
 void EvboxMaxComponent::send_periodic_cmd18_() {
