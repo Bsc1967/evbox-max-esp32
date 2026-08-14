@@ -73,7 +73,7 @@ void EvboxMaxComponent::loop() {
     // separate from the real MAX heartbeat cmd21, which is only sent as ACK.
     this->send_periodic_cmd18_();
     if (!this->startup_config_received_ && this->startup_step_ == 0 &&
-        (this->last_startup_sync_request_ms_ == 0 || now - this->last_startup_sync_request_ms_ >= 30000UL)) {
+        (this->last_startup_sync_request_ms_ == 0 || now - this->last_startup_sync_request_ms_ >= 10000UL)) {
       ESP_LOGI(TAG, "Startup sync not complete; retrying config/status sync for CB 0x%02X", this->chargebox_address_);
       this->last_startup_sync_request_ms_ = now;
       this->schedule_startup_step_(1, 100);
