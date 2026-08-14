@@ -20,6 +20,8 @@ void EvboxMaxComponent::setup() {
   this->last_current_request_code_ = 0;
   this->have_last_current_request_code_ = false;
   this->last_current_request_ms_ = 0;
+  this->pending_current_request_code_ = 0;
+  this->pending_current_request_after_config_ = false;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
@@ -280,7 +282,24 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve meter settings");
       this->startup_config_received_ = true;
       this->log_autostart_config_(frame.data);
-      this->transition_(IDLE);
+      if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
+          this->is_supported_current_request_(this->pending_current_request_code_)) {
+        ESP_LOGI(TAG, "Applying deferred CB current request %s after config sync",
+                 this->current_request_name_(this->pending_current_request_code_));
+        this->pending_current_request_after_config_ = false;
+        this->start_requested_ = true;
+        this->current_start_released_ = true;
+        if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
+        this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+        this->transition_(STARTING);
+        this->send_current_setpoint_(this->desired_current_);
+      } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
+        this->transition_(this->start_requested_ ? STARTING : PREPARING);
+      } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x02) {
+        this->transition_(IDLE);
+      } else {
+        this->transition_(IDLE);
+      }
       break;
     case FrameType::CONFIG_SET_RESPONSE:
       if (frame.data == hex_word(ACK)) {
@@ -290,7 +309,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       }
       // Registration and startup config are done; the controller may now wait
       // for local authorisation/start commands.
-      this->transition_(IDLE);
+      if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
+        this->transition_(this->start_requested_ ? STARTING : PREPARING);
+      } else {
+        this->transition_(IDLE);
+      }
       break;
     case FrameType::HEARTBEAT:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
@@ -344,8 +367,20 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
           break;
         }
+        if (!this->startup_config_received_ && request_code != 0x81) {
+          ESP_LOGI(TAG, "Deferring CB current request %s until config sync is complete",
+                   this->current_request_name_(request_code));
+          this->pending_current_request_code_ = request_code;
+          this->pending_current_request_after_config_ = true;
+          break;
+        }
         if (!this->stop_requested_) {
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          if (!this->charge_flow_requested_() && (request_code == 0x30 || request_code == 0xA7)) {
+            ESP_LOGI(TAG, "CB current request %s starts local charge tracking", this->current_request_name_(request_code));
+            this->start_requested_ = true;
+            if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
+          }
           this->send_current_setpoint_(this->desired_current_);
           if (this->charge_flow_requested_()) {
             this->current_start_released_ = true;
@@ -978,10 +1013,12 @@ uint32_t EvboxMaxComponent::seconds_since_2000_() const {
 
 void EvboxMaxComponent::watchdog_() {
   if (millis() - this->last_rx_ms_ > this->watchdog_timeout_ms_) {
-    // EVBox communication loss is treated as a hard fault. The ChargeBox must
-    // not keep receiving stale current commands when the bus is silent.
     this->evbox_online_ = false;
-    this->transition_(FAULT);
+    if (this->charge_flow_requested_() || this->active_current_ > 0.0f) {
+      // During an active or requested charge flow, bus silence is a hard fault:
+      // the ChargeBox must not keep receiving stale current commands.
+      this->transition_(FAULT);
+    }
   }
 }
 
