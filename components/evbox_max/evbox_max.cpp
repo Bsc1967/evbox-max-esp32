@@ -344,20 +344,25 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
           break;
         }
-        if (!this->stop_requested_ && this->charge_flow_requested_()) {
-          this->current_start_released_ = true;
-          if (request_code == 0x81) {
-            this->session_active_ = true;
-            this->start_requested_ = false;
-            this->start_requested_ms_ = 0;
-            this->transition_(CHARGING);
-          } else if (this->state_ != CHARGING && this->state_ != STARTING) {
-            this->transition_(STARTING);
-          }
+        if (!this->stop_requested_) {
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           this->send_current_setpoint_(this->desired_current_);
+          if (this->charge_flow_requested_()) {
+            this->current_start_released_ = true;
+            if (request_code == 0x81) {
+              this->session_active_ = true;
+              this->start_requested_ = false;
+              this->start_requested_ms_ = 0;
+              this->transition_(CHARGING);
+            } else if (this->state_ != CHARGING && this->state_ != STARTING) {
+              this->transition_(STARTING);
+            }
+          } else {
+            ESP_LOGI(TAG, "CB current request answered with limit while state=%s; local session not active yet",
+                     this->state_name_());
+          }
         } else {
-          ESP_LOGI(TAG, "CB current request acknowledged; no current limit sent while state=%s", this->state_name_());
+          ESP_LOGI(TAG, "CB current request acknowledged; no current limit sent while stop is requested");
         }
       }
       break;
@@ -945,9 +950,16 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   this->current_limit_returned_ = false;
   this->update_ev_measurements_();
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
-  const std::string value = hex_word(tenths);
-  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB", static_cast<float>(tenths) / 10.0f);
-  this->send_packet_(this->chargebox_address_, 0x6B, std::string("01") + hex_word(60) + value + value + value);
+  const uint8_t phase_mask = this->evbox_active_phase_mask_ != 0 ? this->evbox_active_phase_mask_ : 0x01;
+  const uint16_t l1_tenths = (phase_mask & 0x01) != 0 ? tenths : 0;
+  const uint16_t l2_tenths = (phase_mask & 0x02) != 0 ? tenths : 0;
+  const uint16_t l3_tenths = (phase_mask & 0x04) != 0 ? tenths : 0;
+  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB phases mask=0x%02X L1=%.1fA L2=%.1fA L3=%.1fA",
+           static_cast<float>(tenths) / 10.0f, phase_mask, static_cast<float>(l1_tenths) / 10.0f,
+           static_cast<float>(l2_tenths) / 10.0f, static_cast<float>(l3_tenths) / 10.0f);
+  this->send_packet_(this->chargebox_address_, 0x6B,
+                     std::string("01") + hex_word(60) + hex_word(l1_tenths) + hex_word(l2_tenths) +
+                         hex_word(l3_tenths));
 }
 
 uint32_t EvboxMaxComponent::seconds_since_2000_() const {
