@@ -334,14 +334,19 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const size_t available = frame.data.size() > 4 ? frame.data.size() - 4 : 0;
         const size_t safe_len = std::min<size_t>(card_len, available);
         const std::string card = frame.data.substr(4, safe_len);
-        const bool access_granted = !this->stop_requested_ &&
-                                    (this->charge_flow_requested_() || (!this->commissioning_mode_ && card == "000000AS"));
+        const bool autostart_card = card == "000000AS";
+        const bool access_granted = !this->stop_requested_ && (this->charge_flow_requested_() || autostart_card);
         ESP_LOGI(TAG, "CB authenticate request state=0x%02X card=%s access=%s", auth_state, card.c_str(),
                  access_granted ? "granted" : "denied");
         const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
         this->send_packet_(frame.src, 0x22,
                            hex_byte(access_granted ? 0x01 : 0x12) + hex_byte(card_len) + padded_card + "FFFF");
-        if (access_granted && this->state_ == IDLE) {
+        if (access_granted && autostart_card && !this->charge_flow_requested_()) {
+          ESP_LOGI(TAG, "CB autostart card accepted; enabling local charge tracking");
+          this->start_requested_ = true;
+          if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
+        }
+        if (access_granted && (this->state_ == IDLE || this->state_ == PREPARING)) {
           this->transition_(AUTHORIZED);
         }
       }
@@ -452,8 +457,20 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             send_current_after_state_ack = true;
             this->transition_(STARTING);
           } else {
-            this->session_active_ = false;
-            this->transition_(PREPARING);
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            if (this->startup_config_received_ && cable_current > 0 && this->desired_current_ >= 6.0f) {
+              ESP_LOGI(TAG, "CB is PREPARING_G3 with cable present; autostart releases %.1f A after cmd26 ACK",
+                       this->desired_current_);
+              this->session_active_ = false;
+              this->start_requested_ = true;
+              this->current_start_released_ = true;
+              if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
+              send_current_after_state_ack = true;
+              this->transition_(STARTING);
+            } else {
+              this->session_active_ = false;
+              this->transition_(PREPARING);
+            }
           }
         }
         else if (code == 0x4A) {
