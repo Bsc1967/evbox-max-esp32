@@ -1019,9 +1019,11 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB phases mask=0x%02X L1=%.1fA L2=%.1fA L3=%.1fA",
            static_cast<float>(tenths) / 10.0f, phase_mask, static_cast<float>(l1_tenths) / 10.0f,
            static_cast<float>(l2_tenths) / 10.0f, static_cast<float>(l3_tenths) / 10.0f);
+  const auto le_word = [](uint16_t value) {
+    return hex_byte(value & 0xFF) + hex_byte((value >> 8) & 0xFF);
+  };
   this->send_packet_(this->chargebox_address_, 0x6B,
-                     std::string("01") + hex_word(60) + hex_word(l1_tenths) + hex_word(l2_tenths) +
-                         hex_word(l3_tenths));
+                     std::string("01") + le_word(60) + le_word(l1_tenths) + le_word(l2_tenths) + le_word(l3_tenths));
 }
 
 uint32_t EvboxMaxComponent::seconds_since_2000_() const {
