@@ -204,7 +204,8 @@ void EvboxMaxComponent::start_session() {
   this->transition_(STARTING);
   const bool cb_already_preparing = this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47;
   if (cb_already_preparing) {
-    ESP_LOGI(TAG, "Start requested while CB is PREPARING_G3; using direct cmd6B current release");
+    ESP_LOGI(TAG, "Start requested while CB is PREPARING_G3; sending cmd31 autostart then direct cmd6B current release");
+    this->send_remote_start_();
     this->current_start_released_ = true;
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
     this->send_current_setpoint_(this->desired_current_);
