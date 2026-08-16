@@ -10,7 +10,7 @@ namespace evbox_max {
 
 static constexpr uint8_t EVBOX_MAX_SOF = 0x02;
 static constexpr uint8_t EVBOX_MAX_EOF = 0x03;
-static constexpr uint8_t EVBOX_MAX_TRAILER = 0xFE;
+static constexpr uint8_t EVBOX_MAX_TRAILER = 0xFF;
 static constexpr size_t EVBOX_MAX_MAX_FRAME = 220;
 
 enum class FrameType : uint8_t {
