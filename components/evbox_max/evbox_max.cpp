@@ -17,11 +17,22 @@ static constexpr uint16_t SETTINGS_VERSION = 1;
 void EvboxMaxComponent::setup() {
   this->settings_pref_ = global_preferences->make_preference<StoredSettings>(fnv1_hash("evbox_max_settings"));
   this->load_settings_();
+  this->session_active_ = false;
+  this->stop_requested_ = false;
+  this->start_requested_ = false;
+  this->current_start_released_ = false;
+  this->remote_start_blocked_ = false;
+  this->automatic_remote_start_attempted_ = false;
+  this->active_current_ = 0.0f;
+  this->desired_current_ = 0.0f;
+  this->commanded_current_ = 0.0f;
   this->last_current_request_code_ = 0;
   this->have_last_current_request_code_ = false;
   this->last_current_request_ms_ = 0;
   this->pending_current_request_code_ = 0;
   this->pending_current_request_after_config_ = false;
+  this->delayed_current_release_pending_ = false;
+  this->start_requested_ms_ = 0;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
@@ -95,6 +106,11 @@ void EvboxMaxComponent::loop() {
                this->have_last_current_request_code_ ? this->current_request_name_(this->last_current_request_code_) : "UNKNOWN");
       this->start_requested_ = false;
       this->current_start_released_ = false;
+      this->delayed_current_release_pending_ = false;
+      if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
+        this->remote_start_blocked_ = true;
+      }
+      this->start_requested_ms_ = 0;
       if (!this->stop_requested_ && this->state_ != CHARGING) {
         this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING
                                                                                                   : this->state_);
@@ -193,6 +209,10 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   const bool charge_flow_active = this->session_active_ || this->state_ == STARTING || this->state_ == SESSION_STARTING ||
                                   this->state_ == CHARGING;
   if (!this->stop_requested_ && charge_flow_active && next_current < this->active_current_) {
+    if (!this->current_setpoint_allowed_()) {
+      ESP_LOGD(TAG, "Calculated lower current %.1f A, but cmd6B is not released yet", next_current);
+      return;
+    }
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
     this->send_current_setpoint_(next_current);
@@ -202,6 +222,7 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 
 void EvboxMaxComponent::start_session() {
   this->remote_start_blocked_ = false;
+  this->automatic_remote_start_attempted_ = false;
   this->stop_requested_ = false;
   this->start_requested_ = true;
   this->session_active_ = false;
@@ -274,14 +295,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->log_autostart_config_(frame.data);
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
           this->is_supported_current_request_(this->pending_current_request_code_)) {
-        ESP_LOGI(TAG, "Applying deferred CB current request %s after config sync",
+        ESP_LOGI(TAG, "Deferred CB current request %s acknowledged after config sync; waiting for explicit start",
                  this->current_request_name_(this->pending_current_request_code_));
         this->pending_current_request_after_config_ = false;
-        this->start_requested_ = true;
-        if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
-        this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-        this->transition_(STARTING);
-        this->schedule_current_release_(800);
+        this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
       } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
         this->transition_(this->start_requested_ ? STARTING : PREPARING);
       } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x02) {
@@ -371,11 +388,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (!this->stop_requested_) {
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           if (!this->charge_flow_requested_() && (request_code == 0x30 || request_code == 0xA7)) {
-            ESP_LOGI(TAG, "CB current request %s starts local charge tracking", this->current_request_name_(request_code));
-            this->start_requested_ = true;
-            if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
-          }
-          if (this->charge_flow_requested_()) {
+            ESP_LOGI(TAG, "CB current request %s acknowledged; waiting for explicit local start or CB autostart",
+                     this->current_request_name_(request_code));
+          } else if (this->charge_flow_requested_()) {
             if (request_code == 0x81) {
               this->session_active_ = true;
               this->current_start_released_ = true;
@@ -430,6 +445,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
           this->remote_start_blocked_ = false;
+          this->automatic_remote_start_attempted_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(IDLE);
         } else if (code == 0x17) {
@@ -451,11 +467,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           } else {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
             if (this->startup_config_received_ && cable_current > 0 && this->desired_current_ >= 6.0f &&
-                !this->remote_start_blocked_) {
+                !this->remote_start_blocked_ && !this->automatic_remote_start_attempted_) {
               ESP_LOGI(TAG, "CB is PREPARING_G3 with cable present; autostart releases %.1f A after cmd26 ACK",
                        this->desired_current_);
               this->session_active_ = false;
               this->start_requested_ = true;
+              this->automatic_remote_start_attempted_ = true;
               if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
               this->send_remote_start_();
               this->transition_(STARTING);
@@ -487,6 +504,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->current_start_released_ = true;
           this->delayed_current_release_pending_ = false;
           this->remote_start_blocked_ = false;
+          this->automatic_remote_start_attempted_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
@@ -495,6 +513,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
           this->remote_start_blocked_ = false;
+          this->automatic_remote_start_attempted_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FINISHING);
         }
@@ -505,6 +524,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
           this->remote_start_blocked_ = false;
+          this->automatic_remote_start_attempted_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FAULT);
         }
