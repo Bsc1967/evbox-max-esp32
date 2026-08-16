@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@g3-cmd6b-after-remote-fail
+  - source: github://Bsc1967/evbox-max-esp32@g3-start-card-000000as-trailer-ff
     refresh: 0s
     components:
       - evbox_max
