@@ -105,7 +105,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_HEARTBEAT_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_WATCHDOG_TIMEOUT, default="30s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_COMMISSIONING_MODE, default=True): cv.boolean,
-        cv.Optional(CONF_REMOTE_START_CARD, default="00000000000000"): validate_remote_start_card,
+        cv.Optional(CONF_REMOTE_START_CARD, default="000000AS"): validate_remote_start_card,
         cv.Optional(CONF_RS485_DE_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RELAY_EVBOX_KNOWN_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RELAY_JANITZA_OK_PIN): pins.gpio_output_pin_schema,
@@ -231,7 +231,7 @@ CONFIG_SCHEMA = cv.Schema(
             state_class="total_increasing",
         ),
         cv.Optional(CONF_TEMPERATURE): sensor.sensor_schema(
-            unit_of_measurement="°C",
+            unit_of_measurement="Â°C",
             accuracy_decimals=1,
             device_class="temperature",
             state_class="measurement",
