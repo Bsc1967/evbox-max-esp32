@@ -579,7 +579,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; trying cmd6B current release fallback");
+          ESP_LOGW(TAG, "Remote start failed; requesting CB config before cmd6B current release fallback");
+          this->startup_config_received_ = false;
+          this->send_config_request_();
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = true;
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
@@ -899,7 +901,7 @@ void EvboxMaxComponent::run_startup_sequence_() {
     case 5:
       ESP_LOGI(TAG, "Startup step 5: CB config request");
       this->transition_(READ_CONFIG);
-      this->send_packet_(this->chargebox_address_, 0x33, "");
+      this->send_config_request_();
       break;
     case 6:
       ESP_LOGI(TAG, "Startup step 6: CB config write");
@@ -944,6 +946,12 @@ void EvboxMaxComponent::send_status_update_request_() {
 void EvboxMaxComponent::send_meter_update_interval_() {
   if (this->chargebox_address_ == 0) return;
   this->send_packet_(this->chargebox_address_, 0x65, "000F");
+}
+
+void EvboxMaxComponent::send_config_request_() {
+  if (this->chargebox_address_ == 0) return;
+  ESP_LOGI(TAG, "Requesting CB config cmd33");
+  this->send_packet_(this->chargebox_address_, 0x33, "");
 }
 
 bool EvboxMaxComponent::send_remote_start_() {
