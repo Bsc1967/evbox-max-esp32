@@ -946,8 +946,8 @@ bool EvboxMaxComponent::send_remote_start_() {
     return false;
   }
   const std::string card = this->remote_start_card_.empty() ? std::string("00000000000000") : this->remote_start_card_;
-  const std::string card_data = card.substr(0, 22);
-  const uint8_t card_len = static_cast<uint8_t>(card_data.size());
+  const uint8_t card_len = static_cast<uint8_t>(std::min<size_t>(card.size(), 22));
+  const std::string card_data = (card.substr(0, 22) + std::string(22, '0')).substr(0, 22);
   ESP_LOGI(TAG, "Sending remote start cmd31 to CB card_len=%u card=%s", card_len, card_data.c_str());
   this->send_packet_(this->chargebox_address_, 0x31, hex_byte(card_len) + card_data);
   return true;
@@ -977,6 +977,15 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
   const uint8_t byte_28 = parse_hex_byte(config, 56, 0xFF);
   ESP_LOGI(TAG, "CB config suspected autostart window byte26=0x%02X byte27=0x%02X byte28=0x%02X; config unchanged",
            byte_26, byte_27, byte_28);
+
+  if (config.size() >= 68) {
+    const uint8_t allow_remote_start = parse_hex_byte(config, 66, 0xFF);
+    ESP_LOGI(TAG, "CB config decoded fw140 guess: auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
+             byte_27, allow_remote_start);
+    if (allow_remote_start == 0x00) {
+      ESP_LOGW(TAG, "CB config appears to have remote start disabled; cmd31 is expected to return 0x23 failed");
+    }
+  }
 }
 
 void EvboxMaxComponent::schedule_current_release_(uint32_t delay_ms) {
