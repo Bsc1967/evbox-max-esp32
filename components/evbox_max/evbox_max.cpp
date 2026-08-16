@@ -951,7 +951,7 @@ bool EvboxMaxComponent::send_remote_start_() {
     ESP_LOGW(TAG, "Remote start requested before ChargeBox address is known");
     return false;
   }
-  const std::string card = this->remote_start_card_.empty() ? std::string("00000000000000") : this->remote_start_card_;
+  const std::string card = this->remote_start_card_.empty() ? std::string("000000AS") : this->remote_start_card_;
   const uint8_t card_len = static_cast<uint8_t>(std::min<size_t>(card.size(), 22));
   const std::string card_data = (card.substr(0, 22) + std::string(22, '0')).substr(0, 22);
   ESP_LOGI(TAG, "Sending remote start cmd31 to CB card_len=%u card=%s", card_len, card_data.c_str());
