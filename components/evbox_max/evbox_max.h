@@ -152,6 +152,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_remote_start_();
   void send_remote_stop_();
   void log_autostart_config_(const std::string &config);
+  void schedule_current_release_(uint32_t delay_ms);
+  void run_delayed_current_release_();
   void send_current_setpoint_(float amps);
   bool charge_flow_requested_() const;
   bool current_setpoint_allowed_() const;
@@ -216,6 +218,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t last_current_request_ms_{0};
   uint8_t pending_current_request_code_{0};
   bool pending_current_request_after_config_{false};
+  bool delayed_current_release_pending_{false};
+  uint32_t delayed_current_release_due_ms_{0};
   uint32_t last_heartbeat_rx_ms_{0};
   uint32_t last_heartbeat_tx_ms_{0};
   uint32_t last_publish_ms_{0};

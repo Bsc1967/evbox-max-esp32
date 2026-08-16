@@ -105,6 +105,7 @@ void EvboxMaxComponent::loop() {
 
   this->watchdog_();
   this->run_startup_sequence_();
+  this->run_delayed_current_release_();
   this->update_relays_();
 
   if (now - this->last_publish_ms_ >= 1000) {
@@ -204,34 +205,21 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ = true;
   this->session_active_ = false;
   this->current_start_released_ = false;
+  this->delayed_current_release_pending_ = false;
   this->start_requested_ms_ = millis();
   this->transition_(STARTING);
-  const bool cb_already_preparing = this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47;
-  if (cb_already_preparing) {
-    ESP_LOGI(TAG, "Start requested while CB is PREPARING_G3; sending cmd31 autostart then direct cmd6B current release");
-    this->send_remote_start_();
-    this->current_start_released_ = true;
-    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    this->send_current_setpoint_(this->desired_current_);
-  } else {
-    this->send_remote_start_();
-  }
-  if (!cb_already_preparing && this->have_last_current_request_code_ &&
-      (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0xA7 ||
-       this->last_current_request_code_ == 0x81)) {
-    ESP_LOGI(TAG, "Start requested while CB current state is %s; sending current limit immediately",
+  this->send_remote_start_();
+  if (this->have_last_current_request_code_ &&
+      (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0xA7)) {
+    ESP_LOGI(TAG, "Start requested while CB current state is %s; scheduling delayed current release",
              this->current_request_name_(this->last_current_request_code_));
+    this->schedule_current_release_(800);
+  } else if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x81) {
+    this->session_active_ = true;
     this->current_start_released_ = true;
-    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    this->send_current_setpoint_(this->desired_current_);
-    if (this->last_current_request_code_ == 0x81) {
-      this->session_active_ = true;
-      this->start_requested_ = false;
-      this->start_requested_ms_ = 0;
-      this->transition_(CHARGING);
-    } else {
-      this->transition_(STARTING);
-    }
+    this->start_requested_ = false;
+    this->start_requested_ms_ = 0;
+    this->transition_(CHARGING);
   }
 }
 
@@ -240,6 +228,7 @@ void EvboxMaxComponent::stop_session() {
   this->start_requested_ = false;
   this->session_active_ = false;
   this->current_start_released_ = false;
+  this->delayed_current_release_pending_ = false;
   this->start_requested_ms_ = 0;
   this->send_current_setpoint_(0.0f);
   this->send_remote_stop_();
@@ -293,11 +282,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
                  this->current_request_name_(this->pending_current_request_code_));
         this->pending_current_request_after_config_ = false;
         this->start_requested_ = true;
-        this->current_start_released_ = true;
         if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
         this->desired_current_ = this->controller_.calculate_current(this->inputs_);
         this->transition_(STARTING);
-        this->send_current_setpoint_(this->desired_current_);
+        this->schedule_current_release_(800);
       } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
         this->transition_(this->start_requested_ ? STARTING : PREPARING);
       } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x02) {
@@ -391,19 +379,23 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->start_requested_ = true;
             if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
           }
-          this->send_current_setpoint_(this->desired_current_);
           if (this->charge_flow_requested_()) {
-            this->current_start_released_ = true;
             if (request_code == 0x81) {
               this->session_active_ = true;
+              this->current_start_released_ = true;
               this->start_requested_ = false;
               this->start_requested_ms_ = 0;
               this->transition_(CHARGING);
-            } else if (this->state_ != CHARGING && this->state_ != STARTING) {
-              this->transition_(STARTING);
+            } else {
+              if (this->state_ != CHARGING && this->state_ != STARTING) {
+                this->transition_(STARTING);
+              }
+              ESP_LOGI(TAG, "Scheduling delayed cmd6B current release after CB current request %s",
+                       this->current_request_name_(request_code));
+              this->schedule_current_release_(800);
             }
           } else {
-            ESP_LOGI(TAG, "CB current request answered with limit while state=%s; local session not active yet",
+            ESP_LOGI(TAG, "CB current request acknowledged while state=%s; local session not active yet",
                      this->state_name_());
           }
         } else {
@@ -432,7 +424,6 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t cable_current = parse_hex_byte(frame.data, 12);
         this->last_cb_status_code_ = code;
         this->have_last_cb_status_code_ = true;
-        bool send_current_after_state_ack = false;
         ESP_LOGI(TAG, "CB state cmd26 status=0x%02X %s is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
                  code, this->cb_status_name_(code), is_charging, led_colour, lock_state, cable_current,
                  static_cast<unsigned>(frame.data.size()));
@@ -441,6 +432,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->session_active_ = false;
           this->start_requested_ = false;
           this->current_start_released_ = false;
+          this->delayed_current_release_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(IDLE);
         } else if (code == 0x17) {
@@ -458,10 +450,6 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(FINISHING);
           } else if (this->start_requested_) {
             this->session_active_ = false;
-            if (!this->current_start_released_) {
-              this->current_start_released_ = true;
-              send_current_after_state_ack = true;
-            }
             this->transition_(STARTING);
           } else {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
@@ -470,9 +458,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
                        this->desired_current_);
               this->session_active_ = false;
               this->start_requested_ = true;
-              this->current_start_released_ = true;
               if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
-              send_current_after_state_ack = true;
+              this->send_remote_start_();
               this->transition_(STARTING);
             } else {
               this->session_active_ = false;
@@ -496,12 +483,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->session_active_ = true;
           this->start_requested_ = false;
           this->current_start_released_ = true;
+          this->delayed_current_release_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
           this->session_active_ = false;
           this->start_requested_ = false;
           this->current_start_released_ = false;
+          this->delayed_current_release_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FINISHING);
         }
@@ -510,6 +499,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ = false;
           this->session_active_ = false;
           this->current_start_released_ = false;
+          this->delayed_current_release_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FAULT);
         }
@@ -528,11 +518,6 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const bool g3_like_state = frame.data.size() >= 128;
         const std::string ack_data = g3_like_state ? std::string("0000000000000000") : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
-        if (send_current_after_state_ack) {
-          ESP_LOGI(TAG, "CB is preparing with start requested; sending current limit after cmd26 ACK");
-          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-          this->send_current_setpoint_(this->desired_current_);
-        }
       }
       break;
     case FrameType::REMOTE_START:
@@ -541,14 +526,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         ESP_LOGI(TAG, "CB remote start response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
         if (result == 0x01 && !this->stop_requested_) {
           this->start_requested_ = true;
+          this->schedule_current_release_(800);
           if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; continuing with direct cmd6B start current");
-          this->current_start_released_ = true;
-          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-          this->send_current_setpoint_(this->desired_current_);
+          ESP_LOGW(TAG, "Remote start failed; waiting for CB current request before cmd6B release");
           this->transition_(STARTING);
         }
       }
@@ -581,6 +564,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->session_active_ = false;
         this->start_requested_ = false;
         this->current_start_released_ = false;
+        this->delayed_current_release_pending_ = false;
         this->start_requested_ms_ = 0;
         this->send_packet_(frame.src, 0x24, "01");
       }
@@ -942,6 +926,30 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
   const uint8_t byte_28 = parse_hex_byte(config, 56, 0xFF);
   ESP_LOGI(TAG, "CB config suspected autostart window byte26=0x%02X byte27=0x%02X byte28=0x%02X; config unchanged",
            byte_26, byte_27, byte_28);
+}
+
+void EvboxMaxComponent::schedule_current_release_(uint32_t delay_ms) {
+  if (this->chargebox_address_ == 0 || this->stop_requested_) return;
+  this->delayed_current_release_pending_ = true;
+  this->delayed_current_release_due_ms_ = millis() + delay_ms;
+  ESP_LOGI(TAG, "Scheduled cmd6B current release in %u ms", delay_ms);
+}
+
+void EvboxMaxComponent::run_delayed_current_release_() {
+  if (!this->delayed_current_release_pending_) return;
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - this->delayed_current_release_due_ms_) < 0) return;
+
+  this->delayed_current_release_pending_ = false;
+  if (this->stop_requested_ || !this->charge_flow_requested_()) {
+    ESP_LOGI(TAG, "Skipping delayed cmd6B current release; charge flow no longer requested");
+    return;
+  }
+
+  this->current_start_released_ = true;
+  this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+  ESP_LOGI(TAG, "Sending delayed cmd6B current release %.1f A", this->desired_current_);
+  this->send_current_setpoint_(this->desired_current_);
 }
 
 void EvboxMaxComponent::send_periodic_cmd18_() {
