@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@g3-stale-start-request-guard
+  - source: github://Bsc1967/evbox-max-esp32@g3-explicit-start-only
     refresh: 0s
     components:
       - evbox_max
@@ -217,11 +217,13 @@ switch:
     evbox_max_id: evbox
     type: START
     name: Start Charging
+    restore_mode: ALWAYS_OFF
 
   - platform: evbox_max
     evbox_max_id: evbox
     type: STOP
     name: Stop Charging
+    restore_mode: ALWAYS_OFF
 
   - platform: evbox_max
     evbox_max_id: evbox

@@ -398,7 +398,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         if (!this->stop_requested_) {
           this->desired_current_ = this->controller_.calculate_current(this->inputs_);
           if (!this->charge_flow_requested_() && (request_code == 0x30 || request_code == 0xA7)) {
-            ESP_LOGI(TAG, "CB current request %s acknowledged; waiting for explicit local start or CB autostart",
+            ESP_LOGI(TAG, "CB current request %s acknowledged; waiting for explicit local start",
                      this->current_request_name_(request_code));
           } else if (this->charge_flow_requested_()) {
             if (request_code == 0x81) {
@@ -485,23 +485,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               this->remote_start_pending_ = false;
             }
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-            if (this->startup_config_received_ && cable_current > 0 && this->desired_current_ >= 6.0f &&
-                !this->remote_start_blocked_ && !this->automatic_remote_start_attempted_) {
-              ESP_LOGI(TAG, "CB is PREPARING_G3 with cable present; autostart releases %.1f A after cmd26 ACK",
-                       this->desired_current_);
-              this->session_active_ = false;
-              this->automatic_remote_start_attempted_ = true;
-              if (this->send_remote_start_()) {
-                this->start_requested_ = true;
-                this->remote_start_pending_ = true;
-                if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
-                this->transition_(STARTING);
-              }
-            } else if (this->remote_start_blocked_) {
+            if (this->remote_start_blocked_) {
               ESP_LOGI(TAG, "CB is PREPARING_G3, but automatic remote start is blocked after last cmd31 failure");
               this->session_active_ = false;
               this->transition_(PREPARING);
             } else {
+              ESP_LOGI(TAG, "CB is PREPARING_G3 with cable present; waiting for explicit local start");
               this->session_active_ = false;
               this->transition_(PREPARING);
             }
