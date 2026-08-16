@@ -84,6 +84,7 @@ std::vector<uint8_t> encode_frame(uint8_t src, uint8_t dst, uint8_t cmd, const s
   out.push_back(EVBOX_MAX_SOF);
   out.insert(out.end(), protected_tail.begin(), protected_tail.end());
   out.push_back(EVBOX_MAX_EOF);
+  out.push_back(EVBOX_MAX_TRAILER);
   return out;
 }
 
