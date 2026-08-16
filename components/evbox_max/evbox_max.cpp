@@ -209,12 +209,7 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ms_ = millis();
   this->transition_(STARTING);
   this->send_remote_start_();
-  if (this->have_last_current_request_code_ &&
-      (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0xA7)) {
-    ESP_LOGI(TAG, "Start requested while CB current state is %s; scheduling delayed current release",
-             this->current_request_name_(this->last_current_request_code_));
-    this->schedule_current_release_(800);
-  } else if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x81) {
+  if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x81) {
     this->session_active_ = true;
     this->current_start_released_ = true;
     this->start_requested_ = false;
@@ -526,13 +521,20 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         ESP_LOGI(TAG, "CB remote start response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
         if (result == 0x01 && !this->stop_requested_) {
           this->start_requested_ = true;
-          this->schedule_current_release_(800);
           if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; waiting for CB current request before cmd6B release");
-          this->transition_(STARTING);
+          ESP_LOGW(TAG, "Remote start failed; cancelling pending cmd6B release and returning to CB state");
+          this->delayed_current_release_pending_ = false;
+          this->current_start_released_ = false;
+          this->start_requested_ = false;
+          this->start_requested_ms_ = 0;
+          if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
+            this->transition_(PREPARING);
+          } else {
+            this->transition_(IDLE);
+          }
         }
       }
       break;
