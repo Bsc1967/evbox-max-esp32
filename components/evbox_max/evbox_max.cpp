@@ -1033,7 +1033,7 @@ void EvboxMaxComponent::send_periodic_cmd18_() {
 }
 
 bool EvboxMaxComponent::charge_flow_requested_() const {
-  return this->start_requested_ || this->session_active_ || this->state_ == STARTING ||
+  return this->start_requested_ || this->session_active_ || this->current_start_released_ ||
          this->state_ == SESSION_STARTING || this->state_ == CHARGING;
 }
 
