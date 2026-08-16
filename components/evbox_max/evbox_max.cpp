@@ -475,6 +475,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           } else if (this->start_requested_ && (this->remote_start_pending_ || this->current_start_released_ ||
                                                 this->session_active_)) {
             this->session_active_ = false;
+            if (this->remote_start_pending_ && !this->current_start_released_ && this->start_requested_ms_ != 0 &&
+                millis() - this->start_requested_ms_ >= 1200UL) {
+              this->remote_start_pending_ = false;
+              this->current_start_released_ = true;
+              this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+              ESP_LOGW(TAG, "No cmd31 response while CB stays PREPARING_G3; releasing cmd6B current %.1f A",
+                       this->desired_current_);
+              this->send_current_setpoint_(this->desired_current_);
+            }
             this->transition_(STARTING);
           } else {
             if (this->start_requested_) {
@@ -554,7 +563,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         }
         this->update_meter_from_state_(frame.data);
         const bool g3_like_state = frame.data.size() >= 128;
-        const std::string ack_data = g3_like_state ? std::string("0000000000000000") : hex_dword(this->session_);
+        const std::string ack_data = g3_like_state ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
+                                                   : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
       }
       break;
