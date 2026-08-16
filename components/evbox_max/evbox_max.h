@@ -175,7 +175,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   EvboxState state_{BOOT};
   uint8_t chargebox_address_{0x00};
   std::string chargebox_serial_{};
-  std::string remote_start_card_{"00000000000000"};
+  std::string remote_start_card_{"000000AS"};
   uint16_t chargebox_firmware_{0};
   uint8_t chargebox_hardware_generation_{0};
   uint32_t session_{1};
