@@ -579,17 +579,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; cancelling pending cmd6B release and returning to CB state");
+          ESP_LOGW(TAG, "Remote start failed; trying cmd6B current release fallback");
           this->delayed_current_release_pending_ = false;
-          this->current_start_released_ = false;
-          this->start_requested_ = false;
+          this->current_start_released_ = true;
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          this->send_current_setpoint_(this->desired_current_);
           this->remote_start_blocked_ = true;
-          this->start_requested_ms_ = 0;
-          if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-            this->transition_(PREPARING);
-          } else {
-            this->transition_(IDLE);
-          }
+          this->transition_(STARTING);
         }
       }
       break;
