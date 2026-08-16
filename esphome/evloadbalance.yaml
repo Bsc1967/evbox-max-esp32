@@ -61,7 +61,7 @@ evbox_max:
   failsafe_mode: LIMIT_6A
   failsafe_current: 6
   commissioning_mode: true
-  remote_start_card: "00000000000000"
+  remote_start_card: "000000AS"
   heartbeat_interval: 5s
   watchdog_timeout: 30s
   relay_evbox_known_pin: GPIO1
