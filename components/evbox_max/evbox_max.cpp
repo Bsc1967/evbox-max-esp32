@@ -946,10 +946,10 @@ bool EvboxMaxComponent::send_remote_start_() {
     return false;
   }
   const std::string card = this->remote_start_card_.empty() ? std::string("00000000000000") : this->remote_start_card_;
-  const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
-  const uint8_t card_len = static_cast<uint8_t>(std::min<size_t>(card.size(), 22));
-  ESP_LOGI(TAG, "Sending remote start cmd31 to CB card_len=%u card=%s", card_len, card.c_str());
-  this->send_packet_(this->chargebox_address_, 0x31, hex_byte(card_len) + padded_card);
+  const std::string card_data = card.substr(0, 22);
+  const uint8_t card_len = static_cast<uint8_t>(card_data.size());
+  ESP_LOGI(TAG, "Sending remote start cmd31 to CB card_len=%u card=%s", card_len, card_data.c_str());
+  this->send_packet_(this->chargebox_address_, 0x31, hex_byte(card_len) + card_data);
   return true;
 }
 
