@@ -182,6 +182,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool stop_requested_{false};
   bool start_requested_{false};
   bool current_start_released_{false};
+  bool remote_start_blocked_{false};
   bool commissioning_mode_{true};
   bool settings_restored_{false};
   bool have_session_start_meter_{false};

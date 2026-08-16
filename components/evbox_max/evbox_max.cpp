@@ -201,6 +201,7 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 }
 
 void EvboxMaxComponent::start_session() {
+  this->remote_start_blocked_ = false;
   this->stop_requested_ = false;
   this->start_requested_ = true;
   this->session_active_ = false;
@@ -428,6 +429,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ = false;
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
+          this->remote_start_blocked_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(IDLE);
         } else if (code == 0x17) {
@@ -448,7 +450,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           } else {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-            if (this->startup_config_received_ && cable_current > 0 && this->desired_current_ >= 6.0f) {
+            if (this->startup_config_received_ && cable_current > 0 && this->desired_current_ >= 6.0f &&
+                !this->remote_start_blocked_) {
               ESP_LOGI(TAG, "CB is PREPARING_G3 with cable present; autostart releases %.1f A after cmd26 ACK",
                        this->desired_current_);
               this->session_active_ = false;
@@ -456,6 +459,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
               this->send_remote_start_();
               this->transition_(STARTING);
+            } else if (this->remote_start_blocked_) {
+              ESP_LOGI(TAG, "CB is PREPARING_G3, but automatic remote start is blocked after last cmd31 failure");
+              this->session_active_ = false;
+              this->transition_(PREPARING);
             } else {
               this->session_active_ = false;
               this->transition_(PREPARING);
@@ -479,6 +486,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ = false;
           this->current_start_released_ = true;
           this->delayed_current_release_pending_ = false;
+          this->remote_start_blocked_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
@@ -486,6 +494,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ = false;
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
+          this->remote_start_blocked_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FINISHING);
         }
@@ -495,6 +504,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->session_active_ = false;
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
+          this->remote_start_blocked_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(FAULT);
         }
@@ -529,6 +539,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->start_requested_ = false;
+          this->remote_start_blocked_ = true;
           this->start_requested_ms_ = 0;
           if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
             this->transition_(PREPARING);
