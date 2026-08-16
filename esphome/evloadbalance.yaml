@@ -1,0 +1,232 @@
+substitutions:
+  device_name: evloadbalance-waveshare
+  friendly_name: EV LoadBalance WaveShare
+  janitza_ip: 192.168.1.30
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: arduino
+
+external_components:
+  - source: github://Bsc1967/evbox-max-esp32@g3-remote-start-card
+    refresh: 0s
+    components:
+      - evbox_max
+      - janitza_umg604
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Setup"
+    password: "evloadbalance"
+
+captive_portal:
+
+# Waveshare ESP32-S3-Relay-6CH onboard RS485:
+# GPIO17 -> RS485 TX
+# GPIO18 -> RS485 RX
+uart:
+  id: evbox_rs485_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 38400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 512
+
+evbox_max:
+  id: evbox
+  uart_id: evbox_rs485_uart
+  mode: PV_SURPLUS
+  charge_phases: 1
+  manual_current: 6
+  max_current: 16
+  failsafe_mode: LIMIT_6A
+  failsafe_current: 6
+  commissioning_mode: true
+  remote_start_card: "00000000000000"
+  heartbeat_interval: 5s
+  watchdog_timeout: 30s
+  relay_evbox_known_pin: GPIO1
+  relay_janitza_ok_pin: GPIO2
+  relay_charging_active_pin: GPIO41
+  relay_failsafe_pin: GPIO42
+  status:
+    name: EVBox Status
+  state:
+    name: EVBox State
+  communication_status:
+    name: EVBox Communication
+  protocol_profile:
+    name: EVBox Protocol Profile
+  cb_serial:
+    name: EVBox CB Serial
+  cb_status_detail:
+    name: EVBox CB Status Detail
+  current_request_state:
+    name: EVBox Current Request State
+  cb_firmware:
+    name: EVBox CB Firmware
+  cb_hardware_generation:
+    name: EVBox CB Hardware Generation
+  ev_current:
+    name: EV Current
+  current_limit:
+    name: EVBox Current Limit
+  desired_current:
+    name: EVBox Desired Current
+  commanded_current:
+    name: EVBox Commanded Current
+  returned_current_limit:
+    name: EVBox Returned Current Limit
+  l1_current:
+    name: EVBox L1 Current
+  l2_current:
+    name: EVBox L2 Current
+  l3_current:
+    name: EVBox L3 Current
+  l1_voltage:
+    name: EVBox L1 Voltage
+  l2_voltage:
+    name: EVBox L2 Voltage
+  l3_voltage:
+    name: EVBox L3 Voltage
+  l1_power_factor:
+    name: EVBox L1 Power Factor
+  l2_power_factor:
+    name: EVBox L2 Power Factor
+  l3_power_factor:
+    name: EVBox L3 Power Factor
+  detected_charge_phases:
+    name: EVBox Detected Charge Phases
+  active_phase_mask:
+    name: EVBox Active Phase Mask
+  power:
+    name: EVBox Power
+  session_energy:
+    name: EV Session Energy
+  meter_value:
+    name: EV Meter Value
+  temperature:
+    name: EVBox Temperature
+
+janitza_umg604:
+  id: janitza
+  evbox_max_id: evbox
+  ip_address: ${janitza_ip}
+  port: 502
+  unit_id: 1
+  update_interval: 1s
+  l1_current:
+    name: Janitza L1 Current
+  l2_current:
+    name: Janitza L2 Current
+  l3_current:
+    name: Janitza L3 Current
+  l1_voltage:
+    name: Janitza L1 Voltage
+  l2_voltage:
+    name: Janitza L2 Voltage
+  l3_voltage:
+    name: Janitza L3 Voltage
+  l1_power:
+    name: Janitza L1 Power
+  l2_power:
+    name: Janitza L2 Power
+  l3_power:
+    name: Janitza L3 Power
+  total_power:
+    name: Janitza Total Power
+  import_power:
+    name: Janitza Import Power
+  export_power:
+    name: Janitza Export Power
+  communication_status:
+    name: Janitza Communication
+
+number:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MANUAL_CURRENT
+    name: Manual Current
+    min_value: 0
+    max_value: 32
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MAX_CURRENT
+    name: Max Current
+    min_value: 0
+    max_value: 32
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_CURRENT
+    name: Failsafe Current
+    min_value: 0
+    max_value: 6
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: CHARGER_BREAKER_CURRENT
+    name: EVBox Group Breaker Current
+    min_value: 0
+    max_value: 32
+    step: 1
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MAIN_FUSE_CURRENT
+    name: Main Fuse Current
+    min_value: 0
+    max_value: 80
+    step: 1
+
+select:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: MODE
+    name: Charge Mode
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: FAILSAFE_MODE
+    name: Failsafe Mode
+
+switch:
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: START
+    name: Start Charging
+    restore_mode: ALWAYS_OFF
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: STOP
+    name: Stop Charging
+    restore_mode: ALWAYS_OFF
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: ENABLE_PV_MODE
+    name: Enable PV Mode
