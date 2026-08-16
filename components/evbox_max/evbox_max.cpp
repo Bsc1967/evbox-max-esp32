@@ -82,7 +82,11 @@ void EvboxMaxComponent::loop() {
     }
     if (!this->stop_requested_ && this->charge_flow_requested_() && this->current_setpoint_allowed_()) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-      this->send_current_setpoint_(this->desired_current_);
+      float delta = this->desired_current_ - this->active_current_;
+      if (delta < 0.0f) delta = -delta;
+      if (this->active_current_ <= 0.0f || delta >= 0.5f) {
+        this->send_current_setpoint_(this->desired_current_);
+      }
     }
     if (this->start_requested_ && !this->session_active_ && this->start_requested_ms_ != 0 &&
         now - this->start_requested_ms_ >= 60000UL) {
@@ -454,8 +458,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(FINISHING);
           } else if (this->start_requested_) {
             this->session_active_ = false;
-            this->current_start_released_ = true;
-            send_current_after_state_ack = true;
+            if (!this->current_start_released_) {
+              this->current_start_released_ = true;
+              send_current_after_state_ack = true;
+            }
             this->transition_(STARTING);
           } else {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
@@ -519,8 +525,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         }
         this->update_meter_from_state_(frame.data);
-        const std::string ack_data = this->chargebox_firmware_ > 100 ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
-                                                                     : hex_dword(this->session_);
+        const bool g3_like_state = frame.data.size() >= 128;
+        const std::string ack_data = g3_like_state ? std::string("0000000000000000") : hex_dword(this->session_);
         this->send_packet_(frame.src, 0x26, ack_data);
         if (send_current_after_state_ack) {
           ESP_LOGI(TAG, "CB is preparing with start requested; sending current limit after cmd26 ACK");
