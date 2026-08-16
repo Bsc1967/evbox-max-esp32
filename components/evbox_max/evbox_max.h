@@ -149,7 +149,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_status_update_request_();
   void send_periodic_cmd18_();
   void send_meter_update_interval_();
-  void send_remote_start_();
+  bool send_remote_start_();
   void send_remote_stop_();
   void log_autostart_config_(const std::string &config);
   void schedule_current_release_(uint32_t delay_ms);
@@ -184,6 +184,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool current_start_released_{false};
   bool remote_start_blocked_{false};
   bool automatic_remote_start_attempted_{false};
+  bool remote_start_pending_{false};
   bool commissioning_mode_{true};
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
