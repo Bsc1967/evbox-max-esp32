@@ -304,6 +304,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->schedule_startup_step_(1, 300);
       break;
     case FrameType::INFO_RESPONSE:
+      this->update_meter_info_(frame.data);
       // Hardware/model data has been read. Next step is configuration so the
       // controller knows what limits and capabilities the ChargeBox reports.
       this->transition_(READ_CONFIG);
@@ -470,6 +471,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t led_colour = parse_hex_byte(frame.data, 8);
         const uint8_t lock_state = parse_hex_byte(frame.data, 10);
         const uint8_t cable_current = parse_hex_byte(frame.data, 12);
+        this->cb_is_charging_ = is_charging;
+        this->cb_led_colour_ = led_colour;
+        this->cb_lock_state_ = lock_state;
+        this->cb_cable_max_current_ = cable_current;
+        this->cable_status_ = cable_current > 0 ? "CONNECTED" : "UNPLUGGED";
+        this->lock_status_ = lock_state != 0 ? "LOCKED" : "UNLOCKED";
         this->last_cb_status_code_ = code;
         this->have_last_cb_status_code_ = true;
         ESP_LOGI(TAG, "CB state cmd26 status=0x%02X %s is_charging=%u led=0x%02X lock=%u cable=%u data_len=%u",
@@ -749,6 +756,7 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   }
 
   const uint32_t raw_meter = parse_hex_uint(data, 18, 8);
+  this->raw_meter_wh_ = static_cast<float>(raw_meter);
   if (raw_meter == 0) {
     ESP_LOGD(TAG, "CB cmd26 meter counter is zero; keeping previous kWh value %.3f", this->meter_value_kwh_);
     return;
@@ -779,6 +787,7 @@ void EvboxMaxComponent::update_meter_from_push_(const std::string &data) {
   const uint32_t raw_pf2 = parse_hex_uint(data, 28, 4);
   const uint32_t raw_pf3 = parse_hex_uint(data, 32, 4);
   const uint32_t raw_meter = parse_hex_uint(data, 36, 8);
+  this->raw_meter_wh_ = static_cast<float>(raw_meter);
   const bool all_zero_block = raw_l1_voltage == 0 && raw_l2_voltage == 0 && raw_l3_voltage == 0 &&
                               raw_l1_current == 0 && raw_l2_current == 0 && raw_l3_current == 0 &&
                               raw_pf1 == 0 && raw_pf2 == 0 && raw_pf3 == 0 && raw_meter == 0;
@@ -810,6 +819,33 @@ void EvboxMaxComponent::update_meter_from_push_(const std::string &data) {
            this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
            this->ev_l2_current_a_, this->ev_l3_current_a_, this->ev_l1_power_factor_, this->ev_l2_power_factor_,
            this->ev_l3_power_factor_, this->meter_value_kwh_);
+}
+
+void EvboxMaxComponent::update_meter_info_(const std::string &data) {
+  if (data.size() < 4) return;
+
+  const uint16_t result = parse_hex_uint(data, 0, 4);
+  if (result != ACK) {
+    this->meter_status_ = result == 0x0055 ? "NACK" : "ERROR 0x" + hex_word(result);
+    ESP_LOGW(TAG, "CB meter info not available: %s", this->meter_status_.c_str());
+    return;
+  }
+
+  this->meter_status_ = "PRESENT";
+  if (data.size() >= 40) {
+    const uint8_t model_len = parse_hex_byte(data, 22, 0);
+    const size_t safe_model_len = std::min<size_t>(model_len, 16);
+    this->meter_model_ = data.substr(24, safe_model_len);
+    while (!this->meter_model_.empty() && this->meter_model_.back() == '0') this->meter_model_.pop_back();
+    if (this->meter_model_.empty()) this->meter_model_ = "UNKNOWN";
+  }
+  if (data.size() >= 56) {
+    this->meter_serial_ = data.substr(40, 16);
+    while (!this->meter_serial_.empty() && this->meter_serial_.front() == '0') this->meter_serial_.erase(0, 1);
+    if (this->meter_serial_.empty()) this->meter_serial_ = "UNKNOWN";
+  }
+  ESP_LOGI(TAG, "CB meter info status=%s model=%s serial=%s", this->meter_status_.c_str(),
+           this->meter_model_.c_str(), this->meter_serial_.c_str());
 }
 
 void EvboxMaxComponent::update_phase_detection_() {
@@ -1216,11 +1252,38 @@ void EvboxMaxComponent::publish_() {
       this->current_request_state_text_sensor_->publish_state("NO_REQUEST");
     }
   }
+  if (this->cable_status_text_sensor_ != nullptr) {
+    this->cable_status_text_sensor_->publish_state(this->cable_status_);
+  }
+  if (this->lock_status_text_sensor_ != nullptr) {
+    this->lock_status_text_sensor_->publish_state(this->lock_status_);
+  }
+  if (this->meter_status_text_sensor_ != nullptr) {
+    this->meter_status_text_sensor_->publish_state(this->meter_status_);
+  }
+  if (this->meter_model_text_sensor_ != nullptr) {
+    this->meter_model_text_sensor_->publish_state(this->meter_model_);
+  }
+  if (this->meter_serial_text_sensor_ != nullptr) {
+    this->meter_serial_text_sensor_->publish_state(this->meter_serial_);
+  }
   if (this->cb_firmware_sensor_ != nullptr) {
     this->cb_firmware_sensor_->publish_state(this->chargebox_firmware_);
   }
   if (this->cb_hardware_generation_sensor_ != nullptr) {
     this->cb_hardware_generation_sensor_->publish_state(this->chargebox_hardware_generation_);
+  }
+  if (this->cb_is_charging_sensor_ != nullptr) {
+    this->cb_is_charging_sensor_->publish_state(this->cb_is_charging_);
+  }
+  if (this->cb_led_colour_sensor_ != nullptr) {
+    this->cb_led_colour_sensor_->publish_state(this->cb_led_colour_);
+  }
+  if (this->cb_lock_state_sensor_ != nullptr) {
+    this->cb_lock_state_sensor_->publish_state(this->cb_lock_state_);
+  }
+  if (this->cable_max_current_sensor_ != nullptr) {
+    this->cable_max_current_sensor_->publish_state(this->cb_cable_max_current_);
   }
   if (this->ev_current_sensor_ != nullptr) {
     this->ev_current_sensor_->publish_state(this->inputs_.ev_current);
@@ -1278,6 +1341,9 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->meter_value_sensor_ != nullptr && !std::isnan(this->meter_value_kwh_)) {
     this->meter_value_sensor_->publish_state(this->meter_value_kwh_);
+  }
+  if (this->raw_meter_wh_sensor_ != nullptr && !std::isnan(this->raw_meter_wh_)) {
+    this->raw_meter_wh_sensor_->publish_state(this->raw_meter_wh_);
   }
   if (this->temperature_sensor_ != nullptr && !std::isnan(this->temperature_c_)) {
     this->temperature_sensor_->publish_state(this->temperature_c_);
