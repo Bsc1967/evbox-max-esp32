@@ -52,6 +52,12 @@ void EvboxMaxComponent::setup() {
   this->last_rx_ms_ = millis();
   this->last_periodic_cmd18_ms_ = millis();
   this->send_restart_registration_();
+  if (this->chargebox_address_ != 0) {
+    ESP_LOGI(TAG, "ChargeBox address retained after ESP restart; forcing startup sync for CB 0x%02X",
+             this->chargebox_address_);
+    this->last_startup_sync_request_ms_ = millis();
+    this->schedule_startup_step_(1, 800);
+  }
 }
 
 void EvboxMaxComponent::loop() {
