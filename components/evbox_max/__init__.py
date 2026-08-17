@@ -45,8 +45,18 @@ CONF_PROTOCOL_PROFILE = "protocol_profile"
 CONF_CB_SERIAL = "cb_serial"
 CONF_CB_STATUS_DETAIL = "cb_status_detail"
 CONF_CURRENT_REQUEST_STATE = "current_request_state"
+CONF_CABLE_STATUS = "cable_status"
+CONF_LOCK_STATUS = "lock_status"
+CONF_METER_STATUS = "meter_status"
+CONF_METER_MODEL = "meter_model"
+CONF_METER_SERIAL = "meter_serial"
 CONF_CB_FIRMWARE = "cb_firmware"
 CONF_CB_HARDWARE_GENERATION = "cb_hardware_generation"
+CONF_CB_IS_CHARGING = "cb_is_charging"
+CONF_CB_LED_COLOUR = "cb_led_colour"
+CONF_CB_LOCK_STATE = "cb_lock_state"
+CONF_CABLE_MAX_CURRENT = "cable_max_current"
+CONF_RAW_METER_WH = "raw_meter_wh"
 CONF_COMMISSIONING_MODE = "commissioning_mode"
 CONF_RS485_DE_PIN = "rs485_de_pin"
 CONF_CHARGE_PHASES = "charge_phases"
@@ -118,6 +128,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CB_SERIAL): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_CB_STATUS_DETAIL): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_CURRENT_REQUEST_STATE): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CABLE_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_LOCK_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_METER_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_METER_MODEL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_METER_SERIAL): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_CB_FIRMWARE): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class="measurement",
@@ -125,6 +140,30 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CB_HARDWARE_GENERATION): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class="measurement",
+        ),
+        cv.Optional(CONF_CB_IS_CHARGING): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CB_LED_COLOUR): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CB_LOCK_STATE): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CABLE_MAX_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=0,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_RAW_METER_WH): sensor.sensor_schema(
+            unit_of_measurement="Wh",
+            accuracy_decimals=0,
+            device_class="energy",
+            state_class="total_increasing",
         ),
         cv.Optional(CONF_EV_CURRENT): sensor.sensor_schema(
             unit_of_measurement="A",
@@ -231,7 +270,7 @@ CONFIG_SCHEMA = cv.Schema(
             state_class="total_increasing",
         ),
         cv.Optional(CONF_TEMPERATURE): sensor.sensor_schema(
-            unit_of_measurement="Â°C",
+            unit_of_measurement="°C",
             accuracy_decimals=1,
             device_class="temperature",
             state_class="measurement",
@@ -295,12 +334,42 @@ async def to_code(config):
     if CONF_CURRENT_REQUEST_STATE in config:
         sens = await text_sensor.new_text_sensor(config[CONF_CURRENT_REQUEST_STATE])
         cg.add(var.set_current_request_state_text_sensor(sens))
+    if CONF_CABLE_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_CABLE_STATUS])
+        cg.add(var.set_cable_status_text_sensor(sens))
+    if CONF_LOCK_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_LOCK_STATUS])
+        cg.add(var.set_lock_status_text_sensor(sens))
+    if CONF_METER_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_METER_STATUS])
+        cg.add(var.set_meter_status_text_sensor(sens))
+    if CONF_METER_MODEL in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_METER_MODEL])
+        cg.add(var.set_meter_model_text_sensor(sens))
+    if CONF_METER_SERIAL in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_METER_SERIAL])
+        cg.add(var.set_meter_serial_text_sensor(sens))
     if CONF_CB_FIRMWARE in config:
         sens = await sensor.new_sensor(config[CONF_CB_FIRMWARE])
         cg.add(var.set_cb_firmware_sensor(sens))
     if CONF_CB_HARDWARE_GENERATION in config:
         sens = await sensor.new_sensor(config[CONF_CB_HARDWARE_GENERATION])
         cg.add(var.set_cb_hardware_generation_sensor(sens))
+    if CONF_CB_IS_CHARGING in config:
+        sens = await sensor.new_sensor(config[CONF_CB_IS_CHARGING])
+        cg.add(var.set_cb_is_charging_sensor(sens))
+    if CONF_CB_LED_COLOUR in config:
+        sens = await sensor.new_sensor(config[CONF_CB_LED_COLOUR])
+        cg.add(var.set_cb_led_colour_sensor(sens))
+    if CONF_CB_LOCK_STATE in config:
+        sens = await sensor.new_sensor(config[CONF_CB_LOCK_STATE])
+        cg.add(var.set_cb_lock_state_sensor(sens))
+    if CONF_CABLE_MAX_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_CABLE_MAX_CURRENT])
+        cg.add(var.set_cable_max_current_sensor(sens))
+    if CONF_RAW_METER_WH in config:
+        sens = await sensor.new_sensor(config[CONF_RAW_METER_WH])
+        cg.add(var.set_raw_meter_wh_sensor(sens))
     if CONF_EV_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_EV_CURRENT])
         cg.add(var.set_ev_current_sensor(sens))
