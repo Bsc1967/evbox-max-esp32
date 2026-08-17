@@ -316,17 +316,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->log_autostart_config_(frame.data);
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
-        if (allow_remote_start == 0x00) {
+        const uint8_t meter_type = parse_hex_byte(frame.data, 30, 0xFF);
+        const bool needs_remote_start_restore = allow_remote_start == 0x00;
+        const bool needs_serial_meter_restore = meter_type != 0x01;
+        if (needs_remote_start_restore || needs_serial_meter_restore) {
           if (!this->remote_start_config_write_attempted_) {
             if (this->send_remote_start_config_enable_(frame.data)) {
               this->remote_start_config_write_attempted_ = true;
             }
           } else if (!this->remote_start_config_verified_) {
-            ESP_LOGW(TAG, "CB remote start flag is still disabled after accepted cmd34; leaving config unchanged now");
+            ESP_LOGW(TAG, "CB config still not restored after accepted cmd34; remote_start=0x%02X meter_type=0x%02X",
+                     allow_remote_start, meter_type);
           }
         } else {
           this->remote_start_config_verified_ = true;
-          ESP_LOGI(TAG, "CB remote start flag is enabled");
+          ESP_LOGI(TAG, "CB config restored: remote start enabled and meter type serial");
         }
       }
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
@@ -1014,8 +1018,8 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   }
 
   // cmd34 is not a raw write-back of cmd33. It starts with a field mask and
-  // uses a shifted layout; preserve the values we know from cmd33 and only
-  // force the remote-start flag in the cmd34 layout.
+  // uses a shifted layout; preserve the values we know from cmd33 and force the
+  // known critical commissioning fields back to modemless serial-meter mode.
   std::string request(94, '0');
   const auto copy_field = [&](size_t dst, size_t src, size_t len) {
     if (dst + len <= request.size() && src + len <= config.size()) {
@@ -1036,10 +1040,11 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   if (config.size() >= 72) copy_field(82, 74, 2);
   if (config.size() >= 74) copy_field(84, 72, 2);
 
+  request.replace(16, 2, "01");  // meter type: serial, not pulse
   request.replace(38, 2, "01");  // auto start card authentication
   request.replace(74, 2, "01");  // allow remote start in cmd34 layout
 
-  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to enable CB remote start; read-back will verify");
+  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to restore serial meter and enable remote start; read-back will verify");
   this->send_packet_(this->chargebox_address_, 0x34, request);
   return true;
 }
@@ -1083,11 +1088,15 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
            byte_26, byte_27, byte_28);
 
   if (config.size() >= 68) {
+    const uint8_t meter_type = parse_hex_byte(config, 30, 0xFF);
     const uint8_t allow_remote_start = parse_hex_byte(config, 66, 0xFF);
-    ESP_LOGI(TAG, "CB config decoded fw140 guess: auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
-             byte_27, allow_remote_start);
+    ESP_LOGI(TAG, "CB config decoded fw140 guess: meter_type(offset30)=0x%02X auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
+             meter_type, byte_27, allow_remote_start);
     if (allow_remote_start == 0x00) {
       ESP_LOGW(TAG, "CB config appears to have remote start disabled; cmd31 is expected to return 0x23 failed");
+    }
+    if (meter_type != 0x01) {
+      ESP_LOGW(TAG, "CB config appears to have non-serial meter type; kWh meter values are expected to stay zero");
     }
   }
 }
