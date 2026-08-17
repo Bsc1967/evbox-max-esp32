@@ -37,6 +37,8 @@ void EvboxMaxComponent::setup() {
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
+  this->remote_start_config_write_attempted_ = false;
+  this->remote_start_config_verified_ = false;
   this->last_startup_sync_request_ms_ = 0;
   if (this->rs485_de_pin_ != nullptr) {
     this->rs485_de_pin_->setup();
@@ -290,6 +292,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       }
       this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
       this->startup_config_received_ = false;
+      this->remote_start_config_write_attempted_ = false;
+      this->remote_start_config_verified_ = false;
       this->last_startup_sync_request_ms_ = millis();
       ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u hw_gen=%u profile=%s",
                this->chargebox_serial_.c_str(), this->chargebox_address_, this->chargebox_firmware_,
@@ -312,10 +316,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
         if (allow_remote_start == 0x00) {
-          this->pending_config_34_ = frame.data;
-          this->pending_config_34_.replace(66, 2, "01");
-          ESP_LOGW(TAG, "Commissioning mode: enabling CB remote start flag at config offset 66 and preserving all other config bytes");
-          this->schedule_startup_step_(6, 300);
+          if (!this->remote_start_config_write_attempted_) {
+            if (this->send_remote_start_config_enable_(frame.data)) {
+              this->remote_start_config_write_attempted_ = true;
+            }
+          } else if (!this->remote_start_config_verified_) {
+            ESP_LOGW(TAG, "CB remote start flag is still disabled after accepted cmd34; leaving config unchanged now");
+          }
+        } else {
+          this->remote_start_config_verified_ = true;
+          ESP_LOGI(TAG, "CB remote start flag is enabled");
         }
       }
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
@@ -335,6 +345,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::CONFIG_SET_RESPONSE:
       if (frame.data == hex_word(ACK)) {
         ESP_LOGI(TAG, "CB config accepted");
+        this->remote_start_config_verified_ = false;
+        this->schedule_startup_step_(5, 800);
       } else {
         ESP_LOGW(TAG, "CB config response data=%s", frame.data.c_str());
       }
@@ -918,11 +930,6 @@ void EvboxMaxComponent::run_startup_sequence_() {
       this->transition_(READ_CONFIG);
       this->send_config_request_();
       break;
-    case 6:
-      ESP_LOGI(TAG, "Startup step 6: CB config write");
-      this->send_packet_(this->chargebox_address_, 0x34, this->pending_config_34_);
-      this->pending_config_34_.clear();
-      break;
     default:
       break;
   }
@@ -967,6 +974,45 @@ void EvboxMaxComponent::send_config_request_() {
   if (this->chargebox_address_ == 0) return;
   ESP_LOGI(TAG, "Requesting CB config cmd33");
   this->send_packet_(this->chargebox_address_, 0x33, "");
+}
+
+bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &config) {
+  if (this->chargebox_address_ == 0) return false;
+  if (config.size() < 68) {
+    ESP_LOGW(TAG, "Cannot enable CB remote start: cmd33 config is too short len=%u",
+             static_cast<unsigned>(config.size()));
+    return false;
+  }
+
+  // cmd34 is not a raw write-back of cmd33. It starts with a field mask and
+  // uses a shifted layout; preserve the values we know from cmd33 and only
+  // force the remote-start flag in the cmd34 layout.
+  std::string request(94, '0');
+  const auto copy_field = [&](size_t dst, size_t src, size_t len) {
+    if (dst + len <= request.size() && src + len <= config.size()) {
+      request.replace(dst, len, config.substr(src, len));
+    }
+  };
+
+  request.replace(0, 8, "03A3F781");
+  copy_field(8, 36, 2);    // LED brightness
+  copy_field(10, 24, 2);   // meter/current mode group
+  copy_field(16, 30, 2);   // meter type
+  copy_field(18, 32, 2);   // meter configuration
+  copy_field(22, 38, 2);   // secondary autostart-related flag
+  copy_field(48, 6, 2);    // interval/limit field from known captures
+  copy_field(54, 12, 4);   // nominal voltage/current field
+  copy_field(62, 20, 4);   // meter update interval
+  copy_field(76, 68, 6);   // breaker/current calibration block
+  if (config.size() >= 72) copy_field(82, 74, 2);
+  if (config.size() >= 74) copy_field(84, 72, 2);
+
+  request.replace(38, 2, "01");  // auto start card authentication
+  request.replace(74, 2, "01");  // allow remote start in cmd34 layout
+
+  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to enable CB remote start; read-back will verify");
+  this->send_packet_(this->chargebox_address_, 0x34, request);
+  return true;
 }
 
 bool EvboxMaxComponent::send_remote_start_() {
