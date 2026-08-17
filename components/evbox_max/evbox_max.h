@@ -84,6 +84,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_current_request_state_text_sensor(text_sensor::TextSensor *sensor) {
     this->current_request_state_text_sensor_ = sensor;
   }
+  void set_cable_status_text_sensor(text_sensor::TextSensor *sensor) { this->cable_status_text_sensor_ = sensor; }
+  void set_lock_status_text_sensor(text_sensor::TextSensor *sensor) { this->lock_status_text_sensor_ = sensor; }
+  void set_meter_status_text_sensor(text_sensor::TextSensor *sensor) { this->meter_status_text_sensor_ = sensor; }
+  void set_meter_model_text_sensor(text_sensor::TextSensor *sensor) { this->meter_model_text_sensor_ = sensor; }
+  void set_meter_serial_text_sensor(text_sensor::TextSensor *sensor) { this->meter_serial_text_sensor_ = sensor; }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
   void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
   void set_desired_current_sensor(sensor::Sensor *sensor) { this->desired_current_sensor_ = sensor; }
@@ -106,6 +111,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
   void set_cb_firmware_sensor(sensor::Sensor *sensor) { this->cb_firmware_sensor_ = sensor; }
   void set_cb_hardware_generation_sensor(sensor::Sensor *sensor) { this->cb_hardware_generation_sensor_ = sensor; }
+  void set_cb_is_charging_sensor(sensor::Sensor *sensor) { this->cb_is_charging_sensor_ = sensor; }
+  void set_cb_led_colour_sensor(sensor::Sensor *sensor) { this->cb_led_colour_sensor_ = sensor; }
+  void set_cb_lock_state_sensor(sensor::Sensor *sensor) { this->cb_lock_state_sensor_ = sensor; }
+  void set_cable_max_current_sensor(sensor::Sensor *sensor) { this->cable_max_current_sensor_ = sensor; }
+  void set_raw_meter_wh_sensor(sensor::Sensor *sensor) { this->raw_meter_wh_sensor_ = sensor; }
 
   void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current,
                       float l1_voltage, float l2_voltage, float l3_voltage, float l1_power_w, float l2_power_w,
@@ -136,6 +146,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void apply_settings_(const StoredSettings &settings);
   void update_meter_from_state_(const std::string &data);
   void update_meter_from_push_(const std::string &data);
+  void update_meter_info_(const std::string &data);
   void update_phase_detection_();
   uint8_t count_phases_(uint8_t phase_mask) const;
   void update_ev_measurements_();
@@ -211,8 +222,18 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint8_t evbox_active_phase_mask_{0x01};
   float session_energy_kwh_{0.0f};
   float meter_value_kwh_{NAN};
+  float raw_meter_wh_{NAN};
   float session_start_meter_kwh_{0.0f};
   float temperature_c_{NAN};
+  uint8_t cb_is_charging_{0};
+  uint8_t cb_led_colour_{0};
+  uint8_t cb_lock_state_{0};
+  uint8_t cb_cable_max_current_{0};
+  std::string cable_status_{"UNKNOWN"};
+  std::string lock_status_{"UNKNOWN"};
+  std::string meter_status_{"UNKNOWN"};
+  std::string meter_model_{"UNKNOWN"};
+  std::string meter_serial_{"UNKNOWN"};
   uint32_t heartbeat_interval_ms_{5000};
   uint32_t watchdog_timeout_ms_{30000};
   uint32_t last_rx_ms_{0};
@@ -246,6 +267,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *cb_serial_text_sensor_{nullptr};
   text_sensor::TextSensor *cb_status_detail_text_sensor_{nullptr};
   text_sensor::TextSensor *current_request_state_text_sensor_{nullptr};
+  text_sensor::TextSensor *cable_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *lock_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_model_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_serial_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
   sensor::Sensor *current_limit_sensor_{nullptr};
   sensor::Sensor *desired_current_sensor_{nullptr};
@@ -268,6 +294,11 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *temperature_sensor_{nullptr};
   sensor::Sensor *cb_firmware_sensor_{nullptr};
   sensor::Sensor *cb_hardware_generation_sensor_{nullptr};
+  sensor::Sensor *cb_is_charging_sensor_{nullptr};
+  sensor::Sensor *cb_led_colour_sensor_{nullptr};
+  sensor::Sensor *cb_lock_state_sensor_{nullptr};
+  sensor::Sensor *cable_max_current_sensor_{nullptr};
+  sensor::Sensor *raw_meter_wh_sensor_{nullptr};
   GPIOPin *rs485_de_pin_{nullptr};
   GPIOPin *relay_evbox_known_pin_{nullptr};
   GPIOPin *relay_janitza_ok_pin_{nullptr};
