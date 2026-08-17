@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@g3-enable-remote-start-config
+  - source: github://Bsc1967/evbox-max-esp32@1128be8415cd5ab61699f4b0bf4133e94973ea6d
     refresh: 0s
     components:
       - evbox_max
@@ -82,10 +82,28 @@ evbox_max:
     name: EVBox CB Status Detail
   current_request_state:
     name: EVBox Current Request State
+  cable_status:
+    name: EVBox Cable Status
+  lock_status:
+    name: EVBox Lock Status
+  meter_status:
+    name: EVBox Meter Status
+  meter_model:
+    name: EVBox Meter Model
+  meter_serial:
+    name: EVBox Meter Serial
   cb_firmware:
     name: EVBox CB Firmware
   cb_hardware_generation:
     name: EVBox CB Hardware Generation
+  cb_is_charging:
+    name: EVBox CB Is Charging
+  cb_led_colour:
+    name: EVBox CB LED Colour
+  cb_lock_state:
+    name: EVBox CB Lock State
+  cable_max_current:
+    name: EVBox Cable Max Current
   ev_current:
     name: EV Current
   current_limit:
@@ -124,6 +142,8 @@ evbox_max:
     name: EV Session Energy
   meter_value:
     name: EV Meter Value
+  raw_meter_wh:
+    name: EVBox Raw Meter Wh
   temperature:
     name: EVBox Temperature
 
