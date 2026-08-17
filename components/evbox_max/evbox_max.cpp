@@ -306,9 +306,18 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->schedule_startup_step_(5, 300);
       break;
     case FrameType::CONFIG_RESPONSE:
-      ESP_LOGI(TAG, "CB config received; automatic config write disabled to preserve meter settings");
+      ESP_LOGI(TAG, "CB config received; preserving meter settings while checking remote start flag");
       this->startup_config_received_ = true;
       this->log_autostart_config_(frame.data);
+      if (this->commissioning_mode_ && frame.data.size() >= 68) {
+        const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
+        if (allow_remote_start == 0x00) {
+          this->pending_config_34_ = frame.data;
+          this->pending_config_34_.replace(66, 2, "01");
+          ESP_LOGW(TAG, "Commissioning mode: enabling CB remote start flag at config offset 66 and preserving all other config bytes");
+          this->schedule_startup_step_(6, 300);
+        }
+      }
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
           this->is_supported_current_request_(this->pending_current_request_code_)) {
         ESP_LOGI(TAG, "Deferred CB current request %s acknowledged after config sync; waiting for explicit start",
