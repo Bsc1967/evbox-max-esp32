@@ -420,7 +420,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
           break;
         }
-        if (!this->startup_config_received_ && request_code != 0x81) {
+        if (!this->startup_config_received_ && request_code != 0x81 && !this->charge_flow_requested_()) {
           ESP_LOGI(TAG, "Deferring CB current request %s until config sync is complete",
                    this->current_request_name_(request_code));
           this->pending_current_request_code_ = request_code;
@@ -939,27 +939,37 @@ void EvboxMaxComponent::run_startup_sequence_() {
   this->startup_step_ = 0;
   switch (step) {
     case 1:
-      ESP_LOGI(TAG, "Startup step 1: connection state");
-      this->send_connection_state_();
-      this->schedule_startup_step_(2, 400);
+      ESP_LOGI(TAG, "Startup step 1: registration recovery");
+      this->send_restart_registration_();
+      this->schedule_startup_step_(2, 2000);
       break;
     case 2:
-      ESP_LOGI(TAG, "Startup step 2: meter update interval");
-      this->send_meter_update_interval_();
-      this->schedule_startup_step_(3, 300);
+      ESP_LOGI(TAG, "Startup step 2: connection state");
+      this->send_connection_state_();
+      this->schedule_startup_step_(3, 500);
       break;
     case 3:
-      ESP_LOGI(TAG, "Startup step 3: meter info request");
-      this->send_packet_(this->chargebox_address_, 0x13, "");
-      this->schedule_startup_step_(4, 300);
+      ESP_LOGI(TAG, "Startup step 3: LED enable");
+      this->send_led_enable_();
+      this->schedule_startup_step_(4, 500);
       break;
     case 4:
-      ESP_LOGI(TAG, "Startup step 4: status update request");
-      this->send_status_update_request_();
-      this->schedule_startup_step_(5, 400);
+      ESP_LOGI(TAG, "Startup step 4: meter update interval");
+      this->send_meter_update_interval_();
+      this->schedule_startup_step_(5, 500);
       break;
     case 5:
-      ESP_LOGI(TAG, "Startup step 5: CB config request");
+      ESP_LOGI(TAG, "Startup step 5: meter info request");
+      this->send_packet_(this->chargebox_address_, 0x13, "");
+      this->schedule_startup_step_(6, 500);
+      break;
+    case 6:
+      ESP_LOGI(TAG, "Startup step 6: status update request");
+      this->send_status_update_request_();
+      this->schedule_startup_step_(7, 1500);
+      break;
+    case 7:
+      ESP_LOGI(TAG, "Startup step 7: CB config request");
       this->transition_(READ_CONFIG);
       this->send_config_request_();
       break;
@@ -986,11 +996,20 @@ void EvboxMaxComponent::send_packet_(uint8_t dst, uint8_t cmd, const std::string
 void EvboxMaxComponent::send_restart_registration_() {
   ESP_LOGI(TAG, "Requesting EVBox registration restart");
   this->send_packet_(ADDR_BROADCAST, 0x1E, "");
+  if (this->chargebox_address_ != 0) {
+    this->send_packet_(this->chargebox_address_, 0x1E, "");
+  }
 }
 
 void EvboxMaxComponent::send_connection_state_() {
   if (this->chargebox_address_ == 0) return;
+  this->send_packet_(ADDR_BROADCAST, 0x1B, "0000038400");
   this->send_packet_(this->chargebox_address_, 0x1B, "0000038400");
+}
+
+void EvboxMaxComponent::send_led_enable_() {
+  if (this->chargebox_address_ == 0) return;
+  this->send_packet_(this->chargebox_address_, 0x1C, "01");
 }
 
 void EvboxMaxComponent::send_status_update_request_() {
@@ -1064,8 +1083,8 @@ bool EvboxMaxComponent::send_remote_start_() {
 
 void EvboxMaxComponent::send_remote_stop_() {
   if (this->chargebox_address_ == 0) return;
-  ESP_LOGI(TAG, "Sending remote stop cmd32 to CB");
-  this->send_packet_(this->chargebox_address_, 0x32, hex_dword(this->session_));
+  ESP_LOGI(TAG, "Sending remote stop cmd32 to CB with zero session payload");
+  this->send_packet_(this->chargebox_address_, 0x32, "00000000");
 }
 
 void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
