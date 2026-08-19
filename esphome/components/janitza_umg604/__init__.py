@@ -1,0 +1,185 @@
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.components import sensor, text_sensor
+from esphome.const import CONF_ID, CONF_IP_ADDRESS, CONF_PORT
+
+CODEOWNERS = ["@Bsc1967"]
+AUTO_LOAD = ["sensor", "text_sensor"]
+
+CONF_UNIT_ID = "unit_id"
+CONF_REGISTERS = "registers"
+CONF_L1_CURRENT = "l1_current"
+CONF_L2_CURRENT = "l2_current"
+CONF_L3_CURRENT = "l3_current"
+CONF_L1_VOLTAGE = "l1_voltage"
+CONF_L2_VOLTAGE = "l2_voltage"
+CONF_L3_VOLTAGE = "l3_voltage"
+CONF_TOTAL_POWER = "total_power"
+CONF_L1_POWER = "l1_power"
+CONF_L2_POWER = "l2_power"
+CONF_L3_POWER = "l3_power"
+CONF_IMPORT_POWER = "import_power"
+CONF_EXPORT_POWER = "export_power"
+CONF_COMMUNICATION_STATUS = "communication_status"
+CONF_EVBOX_MAX_ID = "evbox_max_id"
+CONF_PHASE_DETECT_CURRENT = "phase_detect_current"
+CONF_DETECTED_CHARGE_PHASES = "detected_charge_phases"
+
+janitza_ns = cg.esphome_ns.namespace("janitza_umg604")
+JanitzaUmg604Component = janitza_ns.class_("JanitzaUmg604Component", cg.PollingComponent)
+evbox_max_ns = cg.esphome_ns.namespace("evbox_max")
+EvboxMaxComponent = evbox_max_ns.class_("EvboxMaxComponent")
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(JanitzaUmg604Component),
+        cv.Required(CONF_IP_ADDRESS): cv.ipv4address,
+        cv.Optional(CONF_PORT, default=502): cv.port,
+        cv.Optional(CONF_UNIT_ID, default=1): cv.int_range(min=1, max=247),
+        cv.Optional(CONF_EVBOX_MAX_ID): cv.use_id(EvboxMaxComponent),
+        cv.Optional(CONF_PHASE_DETECT_CURRENT, default=5): cv.float_range(min=0.5, max=32),
+        cv.Optional(CONF_REGISTERS, default={}): cv.Schema(
+            {
+                cv.Optional(CONF_L1_CURRENT, default=1325): cv.positive_int,
+                cv.Optional(CONF_L2_CURRENT, default=1327): cv.positive_int,
+                cv.Optional(CONF_L3_CURRENT, default=1329): cv.positive_int,
+                cv.Optional(CONF_L1_VOLTAGE, default=1317): cv.positive_int,
+                cv.Optional(CONF_L2_VOLTAGE, default=1319): cv.positive_int,
+                cv.Optional(CONF_L3_VOLTAGE, default=1321): cv.positive_int,
+                cv.Optional(CONF_L1_POWER, default=1333): cv.positive_int,
+                cv.Optional(CONF_L2_POWER, default=1335): cv.positive_int,
+                cv.Optional(CONF_L3_POWER, default=1337): cv.positive_int,
+                cv.Optional(CONF_TOTAL_POWER, default=1369): cv.positive_int,
+                cv.Optional(CONF_IMPORT_POWER, default=1369): cv.positive_int,
+                cv.Optional(CONF_EXPORT_POWER, default=1369): cv.positive_int,
+            }
+        ),
+        cv.Optional(CONF_L1_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=2,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=2,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=2,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L1_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_TOTAL_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L1_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L2_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_L3_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_IMPORT_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_EXPORT_POWER): sensor.sensor_schema(
+            unit_of_measurement="W",
+            accuracy_decimals=0,
+            device_class="power",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_DETECTED_CHARGE_PHASES): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_COMMUNICATION_STATUS): text_sensor.text_sensor_schema(),
+    }
+).extend(cv.polling_component_schema("1s"))
+
+
+async def to_code(config):
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+
+    cg.add(var.set_host(str(config[CONF_IP_ADDRESS])))
+    cg.add(var.set_port(config[CONF_PORT]))
+    cg.add(var.set_unit_id(config[CONF_UNIT_ID]))
+    cg.add(var.set_phase_detect_current(config[CONF_PHASE_DETECT_CURRENT]))
+    if CONF_EVBOX_MAX_ID in config:
+        parent = await cg.get_variable(config[CONF_EVBOX_MAX_ID])
+        cg.add(var.set_evbox_parent(parent))
+
+    registers = config[CONF_REGISTERS]
+    cg.add(var.set_register_l1_current(registers[CONF_L1_CURRENT]))
+    cg.add(var.set_register_l2_current(registers[CONF_L2_CURRENT]))
+    cg.add(var.set_register_l3_current(registers[CONF_L3_CURRENT]))
+    cg.add(var.set_register_l1_voltage(registers[CONF_L1_VOLTAGE]))
+    cg.add(var.set_register_l2_voltage(registers[CONF_L2_VOLTAGE]))
+    cg.add(var.set_register_l3_voltage(registers[CONF_L3_VOLTAGE]))
+    cg.add(var.set_register_l1_power(registers[CONF_L1_POWER]))
+    cg.add(var.set_register_l2_power(registers[CONF_L2_POWER]))
+    cg.add(var.set_register_l3_power(registers[CONF_L3_POWER]))
+    cg.add(var.set_register_total_power(registers[CONF_TOTAL_POWER]))
+    cg.add(var.set_register_import_power(registers[CONF_IMPORT_POWER]))
+    cg.add(var.set_register_export_power(registers[CONF_EXPORT_POWER]))
+
+    for key, setter in [
+        (CONF_L1_CURRENT, var.set_l1_current_sensor),
+        (CONF_L2_CURRENT, var.set_l2_current_sensor),
+        (CONF_L3_CURRENT, var.set_l3_current_sensor),
+        (CONF_L1_VOLTAGE, var.set_l1_voltage_sensor),
+        (CONF_L2_VOLTAGE, var.set_l2_voltage_sensor),
+        (CONF_L3_VOLTAGE, var.set_l3_voltage_sensor),
+        (CONF_L1_POWER, var.set_l1_power_sensor),
+        (CONF_L2_POWER, var.set_l2_power_sensor),
+        (CONF_L3_POWER, var.set_l3_power_sensor),
+        (CONF_TOTAL_POWER, var.set_total_power_sensor),
+        (CONF_IMPORT_POWER, var.set_import_power_sensor),
+        (CONF_EXPORT_POWER, var.set_export_power_sensor),
+        (CONF_DETECTED_CHARGE_PHASES, var.set_detected_charge_phases_sensor),
+    ]:
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(setter(sens))
+
+    if CONF_COMMUNICATION_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_COMMUNICATION_STATUS])
+        cg.add(var.set_communication_text_sensor(sens))
