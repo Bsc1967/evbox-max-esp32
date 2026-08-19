@@ -158,6 +158,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
   void send_restart_registration_();
   void send_connection_state_();
+  void send_led_enable_();
   void send_status_update_request_();
   void send_periodic_cmd18_();
   void send_meter_update_interval_();
