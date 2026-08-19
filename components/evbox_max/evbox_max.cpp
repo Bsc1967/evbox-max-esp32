@@ -939,37 +939,32 @@ void EvboxMaxComponent::run_startup_sequence_() {
   this->startup_step_ = 0;
   switch (step) {
     case 1:
-      ESP_LOGI(TAG, "Startup step 1: registration recovery");
-      this->send_restart_registration_();
-      this->schedule_startup_step_(2, 2000);
+      ESP_LOGI(TAG, "Startup step 1: connection state");
+      this->send_connection_state_();
+      this->schedule_startup_step_(2, 500);
       break;
     case 2:
-      ESP_LOGI(TAG, "Startup step 2: connection state");
-      this->send_connection_state_();
+      ESP_LOGI(TAG, "Startup step 2: LED enable");
+      this->send_led_enable_();
       this->schedule_startup_step_(3, 500);
       break;
     case 3:
-      ESP_LOGI(TAG, "Startup step 3: LED enable");
-      this->send_led_enable_();
+      ESP_LOGI(TAG, "Startup step 3: meter update interval");
+      this->send_meter_update_interval_();
       this->schedule_startup_step_(4, 500);
       break;
     case 4:
-      ESP_LOGI(TAG, "Startup step 4: meter update interval");
-      this->send_meter_update_interval_();
+      ESP_LOGI(TAG, "Startup step 4: meter info request");
+      this->send_packet_(this->chargebox_address_, 0x13, "");
       this->schedule_startup_step_(5, 500);
       break;
     case 5:
-      ESP_LOGI(TAG, "Startup step 5: meter info request");
-      this->send_packet_(this->chargebox_address_, 0x13, "");
-      this->schedule_startup_step_(6, 500);
+      ESP_LOGI(TAG, "Startup step 5: status update request");
+      this->send_status_update_request_();
+      this->schedule_startup_step_(6, 1500);
       break;
     case 6:
-      ESP_LOGI(TAG, "Startup step 6: status update request");
-      this->send_status_update_request_();
-      this->schedule_startup_step_(7, 1500);
-      break;
-    case 7:
-      ESP_LOGI(TAG, "Startup step 7: CB config request");
+      ESP_LOGI(TAG, "Startup step 6: CB config request");
       this->transition_(READ_CONFIG);
       this->send_config_request_();
       break;
