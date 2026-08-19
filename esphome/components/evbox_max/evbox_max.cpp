@@ -319,18 +319,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t meter_type = parse_hex_byte(frame.data, 30, 0xFF);
         const bool needs_remote_start_restore = allow_remote_start == 0x00;
         const bool needs_serial_meter_restore = meter_type != 0x01;
-        if (needs_remote_start_restore || needs_serial_meter_restore) {
+        if (needs_serial_meter_restore) {
+          ESP_LOGW(TAG, "CB meter type is not serial according to cmd33 read-back; not writing cmd34 because the meter field mapping is not proven");
+        }
+        if (needs_remote_start_restore) {
           if (!this->remote_start_config_write_attempted_) {
             if (this->send_remote_start_config_enable_(frame.data)) {
               this->remote_start_config_write_attempted_ = true;
             }
           } else if (!this->remote_start_config_verified_) {
-            ESP_LOGW(TAG, "CB config still not restored after accepted cmd34; remote_start=0x%02X meter_type=0x%02X",
-                     allow_remote_start, meter_type);
+            ESP_LOGW(TAG, "CB remote start flag still not restored after accepted cmd34; remote_start=0x%02X",
+                     allow_remote_start);
           }
         } else {
           this->remote_start_config_verified_ = true;
-          ESP_LOGI(TAG, "CB config restored: remote start enabled and meter type serial");
+          ESP_LOGI(TAG, "CB remote start config verified enabled");
         }
       }
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
@@ -1032,8 +1035,8 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   }
 
   // cmd34 is not a raw write-back of cmd33. It starts with a field mask and
-  // uses a shifted layout; preserve the values we know from cmd33 and force the
-  // known critical commissioning fields back to modemless serial-meter mode.
+  // uses a shifted layout. Only the remote-start flag is written here; meter
+  // type restore is deliberately not attempted until the mapping is proven.
   std::string request(94, '0');
   const auto copy_field = [&](size_t dst, size_t src, size_t len) {
     if (dst + len <= request.size() && src + len <= config.size()) {
@@ -1054,11 +1057,11 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   if (config.size() >= 72) copy_field(82, 74, 2);
   if (config.size() >= 74) copy_field(84, 72, 2);
 
-  request.replace(16, 2, "01");  // meter type: serial, not pulse
+  copy_field(16, 30, 2);         // preserve meter type
   request.replace(38, 2, "01");  // auto start card authentication
   request.replace(74, 2, "01");  // allow remote start in cmd34 layout
 
-  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to restore serial meter and enable remote start; read-back will verify");
+  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to enable remote start only; meter config is preserved");
   this->send_packet_(this->chargebox_address_, 0x34, request);
   return true;
 }
