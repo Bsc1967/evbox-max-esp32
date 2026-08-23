@@ -517,7 +517,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         }
 
         if (request_code == 0x30) {
-          ESP_LOGI(TAG, "CB current request WAITING_FOR_CMD26 acknowledged; not releasing cmd6B");
+          if (this->start_requested_ && !this->current_start_released_ && !this->delayed_current_release_pending_) {
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            ESP_LOGI(TAG, "CB current request CONNECTED_WAITING with active start; scheduling cmd6B current release %.1f A",
+                     this->desired_current_);
+            this->schedule_current_release_(100);
+            this->transition_(STARTING);
+          } else {
+            ESP_LOGI(TAG, "CB current request WAITING_FOR_CMD26 acknowledged; no cmd6B release needed");
+          }
           if (!this->charge_flow_requested_()) {
             this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
           }
@@ -685,7 +693,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           } else {
             ESP_LOGI(TAG, "CB reports FINISHED_PLUGGED_IN; reset already pending, waiting for PREPARING/auth flow");
           }
-          this->transition_(cable_current > 0 ? PREPARING : IDLE);
+          this->transition_(this->start_requested_ ? STARTING : (cable_current > 0 ? PREPARING : IDLE));
         }
         else if (code == 0x0A) {
           const bool connected_waiting = cable_current > 0 && this->have_last_current_request_code_ &&
@@ -764,11 +772,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; keeping requested start but waiting for CB cmd22/cmd23");
+          ESP_LOGW(TAG, "Remote start failed; keeping requested start and falling back to cmd6B release");
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->remote_start_blocked_ = true;
-          this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
+          if (this->cb_cable_max_current_ > 0) {
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            this->schedule_current_release_(250);
+            this->transition_(STARTING);
+          } else {
+            this->transition_(IDLE);
+          }
         }
       }
       break;
