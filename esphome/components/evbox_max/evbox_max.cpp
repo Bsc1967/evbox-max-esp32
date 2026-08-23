@@ -1055,10 +1055,33 @@ bool EvboxMaxComponent::send_known_good_meter_config_restore_(const std::string 
     return false;
   }
 
-  ESP_LOGW(TAG, "Commissioning mode: restoring known-good CB meter config snapshot from working kWh log");
+  std::string request(94, '0');
+  const auto copy_field = [&](size_t dst, size_t src, size_t len) {
+    if (dst + len <= request.size() && src + len <= known_good.size()) {
+      request.replace(dst, len, known_good.substr(src, len));
+    }
+  };
+
+  request.replace(0, 8, "03A3F781");
+  copy_field(8, 36, 2);    // LED brightness
+  copy_field(10, 24, 2);   // meter/current mode group
+  copy_field(16, 30, 2);   // meter type
+  copy_field(18, 32, 2);   // meter configuration
+  copy_field(22, 38, 2);   // secondary autostart-related flag
+  copy_field(48, 6, 2);    // interval/limit field from known captures
+  copy_field(54, 12, 4);   // nominal voltage/current field
+  copy_field(62, 20, 4);   // meter update interval
+  copy_field(76, 68, 6);   // breaker/current calibration block
+  copy_field(82, 74, 2);
+  copy_field(84, 72, 2);
+  request.replace(38, 2, "01");  // auto start card authentication
+  request.replace(74, 2, "01");  // allow remote start
+
+  ESP_LOGW(TAG, "Commissioning mode: restoring known-good CB meter config via mapped cmd34 layout");
   ESP_LOGW(TAG, "Current cmd33=%s", config.c_str());
-  ESP_LOGW(TAG, "Restore cmd34=%s", known_good.c_str());
-  this->send_packet_(this->chargebox_address_, 0x34, known_good);
+  ESP_LOGW(TAG, "Known-good cmd33=%s", known_good.c_str());
+  ESP_LOGW(TAG, "Restore cmd34=%s", request.c_str());
+  this->send_packet_(this->chargebox_address_, 0x34, request);
   return true;
 }
 
