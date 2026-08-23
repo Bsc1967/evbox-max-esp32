@@ -252,15 +252,15 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested");
+  ESP_LOGI(TAG, "Local start requested; waiting for CB-driven authorization/start flow");
 
-  if (this->send_remote_start_()) {
+  if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 && this->send_remote_start_()) {
     this->remote_start_pending_ = true;
+    this->automatic_remote_start_attempted_ = true;
     this->transition_(STARTING);
   } else {
-    this->start_requested_ = false;
-    this->start_requested_ms_ = 0;
-    this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
+    ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
+    this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
   }
 }
 
@@ -571,24 +571,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
-          } else if (this->start_requested_ && (this->remote_start_pending_ || this->current_start_released_ ||
-                                                this->session_active_)) {
+          } else if (this->start_requested_) {
             this->session_active_ = false;
-            if (this->remote_start_pending_ && !this->current_start_released_ && this->start_requested_ms_ != 0 &&
-                millis() - this->start_requested_ms_ >= 1200UL) {
+            if (!this->remote_start_pending_ && !this->current_start_released_ && !this->automatic_remote_start_attempted_) {
+              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; sending one cmd31 trigger");
+              if (this->send_remote_start_()) {
+                this->remote_start_pending_ = true;
+                this->automatic_remote_start_attempted_ = true;
+              }
+            } else if (this->remote_start_pending_ && !this->current_start_released_ && this->start_requested_ms_ != 0 &&
+                       millis() - this->start_requested_ms_ >= 1200UL) {
               this->remote_start_pending_ = false;
-              this->remote_start_blocked_ = true;
-              ESP_LOGW(TAG, "No cmd31 response while CB stays PREPARING_G3; waiting for CB cmd6A before current release");
+              ESP_LOGW(TAG, "No cmd31 response while CB stays PREPARING_G3; continuing to wait for CB cmd22/cmd23");
             }
             this->transition_(STARTING);
           } else {
-            if (this->start_requested_) {
-              ESP_LOGW(TAG, "Clearing stale start request in PREPARING_G3; no cmd31/current release is pending");
-              this->start_requested_ = false;
-              this->start_requested_ms_ = 0;
-              this->delayed_current_release_pending_ = false;
-              this->remote_start_pending_ = false;
-            }
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
             if (this->remote_start_blocked_) {
               ESP_LOGI(TAG, "CB is PREPARING_G3, but automatic remote start is blocked after last cmd31 failure");
@@ -626,13 +623,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         } else if (code == 0x4B) {
           this->stop_requested_ = false;
           this->session_active_ = false;
-          this->start_requested_ = false;
           this->current_start_released_ = false;
           this->delayed_current_release_pending_ = false;
-          this->remote_start_blocked_ = false;
-          this->automatic_remote_start_attempted_ = false;
           this->remote_start_pending_ = false;
-          this->start_requested_ms_ = 0;
+          if (!this->start_requested_) {
+            this->remote_start_blocked_ = false;
+            this->automatic_remote_start_attempted_ = false;
+            this->start_requested_ms_ = 0;
+          } else {
+            ESP_LOGI(TAG, "CB reports FINISHED_PLUGGED_IN; keeping queued start request until next PREPARING/auth flow");
+          }
           this->transition_(cable_current > 0 ? PREPARING : IDLE);
         }
         else if (code == 0x0A) {
@@ -689,13 +689,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; waiting for a new valid start condition before cmd6B");
-          this->start_requested_ = false;
-          this->start_requested_ms_ = 0;
+          ESP_LOGW(TAG, "Remote start failed; keeping requested start but waiting for CB cmd22/cmd23");
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->remote_start_blocked_ = true;
-          this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
+          this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
         }
       }
       break;
@@ -730,8 +728,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         } else {
           ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; stop is requested");
         }
-        const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
-                                                                 : std::string("01") + hex_dword(this->session_);
+        const std::string data = "010000000000000000";
         this->send_packet_(frame.src, 0x23, data);
       }
       break;
