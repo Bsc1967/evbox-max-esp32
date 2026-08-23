@@ -655,10 +655,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         } else if (code == 0x4B) {
           this->stop_requested_ = false;
           this->session_active_ = false;
-          this->current_start_released_ = false;
-          this->delayed_current_release_pending_ = false;
           this->remote_start_pending_ = false;
           if (!this->start_requested_) {
+            this->current_start_released_ = false;
+            this->delayed_current_release_pending_ = false;
             this->remote_start_blocked_ = false;
             this->automatic_remote_start_attempted_ = false;
             this->finished_reset_pending_ = false;
@@ -674,6 +674,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               this->schedule_current_release_(750);
             }
           } else if (!this->finished_reset_pending_) {
+            this->current_start_released_ = false;
+            this->delayed_current_release_pending_ = false;
             this->finished_reset_pending_ = true;
             this->remote_start_blocked_ = false;
             this->automatic_remote_start_attempted_ = false;
