@@ -342,9 +342,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
         const uint8_t meter_type = parse_hex_byte(frame.data, 30, 0xFF);
-        const bool needs_known_good_meter_restore = meter_type != 0x01;
+        const uint8_t meter_address = parse_hex_byte(frame.data, 32, 0xFF);
+        const bool needs_known_good_meter_restore = meter_type != 0x01 || meter_address != 0x01;
         const bool needs_remote_start_restore = allow_remote_start == 0x00;
-        const bool needs_serial_meter_restore = meter_type != 0x01;
+        const bool needs_serial_meter_restore = meter_type != 0x01 || meter_address != 0x01;
         if (needs_known_good_meter_restore) {
           this->known_good_meter_config_verified_ = false;
           const uint32_t now = millis();
@@ -362,8 +363,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             }
           } else {
             const uint32_t retry_in_ms = retry_due ? 0UL : 30000UL - elapsed;
-            ESP_LOGW(TAG, "Serial meter config still not restored: meter_type=0x%02X attempts=%u next_retry_in=%us",
-                     meter_type, this->meter_config_restore_attempts_,
+            ESP_LOGW(TAG, "Serial meter config still not restored: meter_type=0x%02X meter_address=0x%02X attempts=%u next_retry_in=%us",
+                     meter_type, meter_address, this->meter_config_restore_attempts_,
                      static_cast<unsigned>(retry_in_ms / 1000UL));
           }
         } else {
@@ -403,9 +404,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       break;
     case FrameType::CONFIG_SET_RESPONSE:
       if (frame.data == hex_word(ACK)) {
-        ESP_LOGI(TAG, "CB config accepted");
+        ESP_LOGI(TAG, "CB config accepted; requesting cmd13 meter info before cmd33 read-back");
         this->remote_start_config_verified_ = false;
-        this->schedule_startup_step_(5, 800);
+        this->schedule_startup_step_(4, 800);
       } else {
         ESP_LOGW(TAG, "CB config response data=%s", frame.data.c_str());
       }
@@ -1112,6 +1113,9 @@ bool EvboxMaxComponent::send_known_good_meter_config_restore_(const std::string 
 
   std::string request = config;
   request.replace(30, 2, "01");  // cmd33 byte 15: meter type serial/Modbus instead of pulse
+  if (request.size() >= 34) {
+    request.replace(32, 2, "01");  // physical meter Modbus address/config must stay at address 1
+  }
 
   ESP_LOGW(TAG, "Commissioning mode: setting CB meter type to serial/Modbus address 1 via direct cmd34 config patch");
   ESP_LOGW(TAG, "Current cmd33=%s", config.c_str());
@@ -1200,14 +1204,15 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
 
   if (config.size() >= 68) {
     const uint8_t meter_type = parse_hex_byte(config, 30, 0xFF);
+    const uint8_t meter_address = parse_hex_byte(config, 32, 0xFF);
     const uint8_t allow_remote_start = parse_hex_byte(config, 66, 0xFF);
-    ESP_LOGI(TAG, "CB config decoded fw140 guess: meter_type(offset30)=0x%02X auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
-             meter_type, byte_27, allow_remote_start);
+    ESP_LOGI(TAG, "CB config decoded fw140 guess: meter_type(offset30)=0x%02X meter_address(offset32)=0x%02X auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
+             meter_type, meter_address, byte_27, allow_remote_start);
     if (allow_remote_start == 0x00) {
       ESP_LOGW(TAG, "CB config appears to have remote start disabled; cmd31 is expected to return 0x23 failed");
     }
-    if (meter_type != 0x01) {
-      ESP_LOGW(TAG, "CB config appears to have non-serial meter type; kWh meter values are expected to stay zero");
+    if (meter_type != 0x01 || meter_address != 0x01) {
+      ESP_LOGW(TAG, "CB config appears to have non-serial/non-address-1 meter config; kWh meter values are expected to stay zero");
     }
   }
 }
