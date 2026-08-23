@@ -163,6 +163,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_periodic_cmd18_();
   void send_meter_update_interval_();
   void send_config_request_();
+  bool send_known_good_meter_config_restore_(const std::string &config);
   bool send_remote_start_config_enable_(const std::string &config);
   bool send_remote_start_();
   void send_remote_stop_();
@@ -255,6 +256,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t startup_step_due_ms_{0};
   uint8_t startup_step_{0};
   bool startup_config_received_{false};
+  bool known_good_meter_config_restore_attempted_{false};
+  bool known_good_meter_config_verified_{false};
   bool remote_start_config_write_attempted_{false};
   bool remote_start_config_verified_{false};
   uint32_t last_startup_sync_request_ms_{0};
