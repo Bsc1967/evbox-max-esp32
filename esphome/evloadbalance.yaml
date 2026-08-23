@@ -21,7 +21,7 @@ external_components:
       - janitza_umg604
 
 logger:
-  level: INFO
+  level: DEBUG
   baud_rate: 115200
   logs:
     evbox_max: DEBUG
