@@ -254,10 +254,17 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested; waiting for CB-driven authorization/start flow");
 
-  const bool startable_cb_state =
-      this->have_last_cb_status_code_ &&
-      (this->last_cb_status_code_ == 0x47 || (this->last_cb_status_code_ == 0x0A && this->cb_cable_max_current_ > 0));
-  if (startable_cb_state && this->send_remote_start_()) {
+  const bool connected_waiting_state =
+      this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x0A && this->cb_cable_max_current_ > 0 &&
+      this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30;
+  if (connected_waiting_state) {
+    this->current_start_released_ = true;
+    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+    ESP_LOGI(TAG, "Local start in 0x0A/connected waiting state; sending cmd6B current release %.1f A",
+             this->desired_current_);
+    this->send_current_setpoint_(this->desired_current_);
+    this->transition_(STARTING);
+  } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 && this->send_remote_start_()) {
     this->remote_start_pending_ = true;
     this->automatic_remote_start_attempted_ = true;
     this->transition_(STARTING);
@@ -645,19 +652,19 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             ESP_LOGW(TAG, "CB reports 0x0A with cable=%uA and cmd6A=0x30; treating as connected/preparing",
                      cable_current);
             this->session_active_ = false;
-            this->current_start_released_ = false;
             this->delayed_current_release_pending_ = false;
             this->remote_start_pending_ = false;
             if (this->start_requested_) {
-              if (!this->automatic_remote_start_attempted_ && !this->remote_start_blocked_) {
-                ESP_LOGI(TAG, "Queued start request in 0x0A/connected state; sending one cmd31 trigger");
-                if (this->send_remote_start_()) {
-                  this->remote_start_pending_ = true;
-                  this->automatic_remote_start_attempted_ = true;
-                }
+              if (!this->current_start_released_) {
+                this->current_start_released_ = true;
+                this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+                ESP_LOGI(TAG, "Queued start request in 0x0A/connected state; sending cmd6B current release %.1f A",
+                         this->desired_current_);
+                this->send_current_setpoint_(this->desired_current_);
               }
               this->transition_(STARTING);
             } else {
+              this->current_start_released_ = false;
               this->transition_(PREPARING);
             }
           } else {
