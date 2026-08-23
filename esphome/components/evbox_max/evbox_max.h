@@ -173,6 +173,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_current_setpoint_(float amps);
   bool charge_flow_requested_() const;
   bool current_setpoint_allowed_() const;
+  bool authorization_allowed_() const;
+  bool automatic_start_allowed_() const;
+  bool current_request_allows_start_(uint8_t code) const;
   bool is_supported_current_request_(uint8_t code) const;
   const char *protocol_profile_name_() const;
   const char *cb_status_name_(uint8_t code) const;

@@ -237,6 +237,12 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
 }
 
 void EvboxMaxComponent::start_session() {
+  if (!this->authorization_allowed_()) {
+    ESP_LOGW(TAG, "Local start blocked; charge mode is disabled/off");
+    this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
+    return;
+  }
+
   this->remote_start_blocked_ = false;
   this->automatic_remote_start_attempted_ = false;
   this->stop_requested_ = false;
@@ -244,49 +250,26 @@ void EvboxMaxComponent::start_session() {
   this->current_start_released_ = false;
   this->delayed_current_release_pending_ = false;
   this->remote_start_pending_ = false;
+  this->start_requested_ = true;
+  this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested");
 
-  const bool recent_supported_current_request =
-      this->have_last_current_request_code_ && this->is_supported_current_request_(this->last_current_request_code_) &&
-      this->last_current_request_ms_ != 0 && millis() - this->last_current_request_ms_ <= 60000UL;
-  if (recent_supported_current_request && this->startup_config_received_) {
-    ESP_LOGI(TAG, "Recent CB cmd6A=%s is available; using current-release start path before cmd31",
-             this->current_request_name_(this->last_current_request_code_));
-    this->start_requested_ = true;
-    this->start_requested_ms_ = millis();
-    this->current_start_released_ = true;
-    this->transition_(STARTING);
-    this->schedule_current_release_(800);
-    return;
-  }
-
   if (this->send_remote_start_()) {
-    this->start_requested_ = true;
     this->remote_start_pending_ = true;
-    this->start_requested_ms_ = millis();
     this->transition_(STARTING);
   } else {
     this->start_requested_ = false;
     this->start_requested_ms_ = 0;
     this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
   }
-  if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x81) {
-    this->session_active_ = true;
-    this->current_start_released_ = true;
-    this->start_requested_ = false;
-    this->start_requested_ms_ = 0;
-    this->transition_(CHARGING);
-  }
 }
 
 void EvboxMaxComponent::stop_session() {
   this->stop_requested_ = true;
   this->start_requested_ = false;
-  this->session_active_ = false;
-  this->current_start_released_ = false;
   this->delayed_current_release_pending_ = false;
+  this->remote_start_pending_ = false;
   this->start_requested_ms_ = 0;
-  this->send_current_setpoint_(0.0f);
   this->send_remote_stop_();
   this->transition_(FINISHING);
 }
@@ -341,11 +324,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->log_autostart_config_(frame.data);
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
-        const uint8_t meter_type = parse_hex_byte(frame.data, 30, 0xFF);
-        const uint8_t meter_address = parse_hex_byte(frame.data, 32, 0xFF);
-        const bool needs_known_good_meter_restore = meter_type != 0x01 || meter_address != 0x01;
+        const uint8_t meter_config = parse_hex_byte(frame.data, 30, 0xFF);
+        const bool needs_known_good_meter_restore = meter_config != 0x01;
         const bool needs_remote_start_restore = allow_remote_start == 0x00;
-        const bool needs_serial_meter_restore = meter_type != 0x01 || meter_address != 0x01;
+        const bool needs_serial_meter_restore = meter_config != 0x01;
         if (needs_known_good_meter_restore) {
           this->known_good_meter_config_verified_ = false;
           const uint32_t now = millis();
@@ -363,8 +345,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             }
           } else {
             const uint32_t retry_in_ms = retry_due ? 0UL : 30000UL - elapsed;
-            ESP_LOGW(TAG, "Serial meter config still not restored: meter_type=0x%02X meter_address=0x%02X attempts=%u next_retry_in=%us",
-                     meter_type, meter_address, this->meter_config_restore_attempts_,
+            ESP_LOGW(TAG, "Serial meter config still not restored: meter_config=0x%02X attempts=%u next_retry_in=%us",
+                     meter_config, this->meter_config_restore_attempts_,
                      static_cast<unsigned>(retry_in_ms / 1000UL));
           }
         } else {
@@ -438,7 +420,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const size_t safe_len = std::min<size_t>(card_len, available);
         const std::string card = frame.data.substr(4, safe_len);
         const bool autostart_card = card == "000000AS";
-        const bool access_granted = !this->stop_requested_ && (this->charge_flow_requested_() || autostart_card);
+        const bool access_granted = !this->stop_requested_ && this->authorization_allowed_();
         ESP_LOGI(TAG, "CB authenticate request state=0x%02X card=%s access=%s", auth_state, card.c_str(),
                  access_granted ? "granted" : "denied");
         const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
@@ -471,43 +453,67 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
                    this->current_request_name_(request_code));
         }
-        if (!this->is_supported_current_request_(request_code)) {
-          ESP_LOGW(TAG, "CB current request state 0x%02X is not released for start; ACK only", request_code);
-          break;
-        }
-        if (!this->startup_config_received_ && request_code != 0x81 && !this->charge_flow_requested_()) {
+        if (!this->startup_config_received_ && this->is_supported_current_request_(request_code) &&
+            request_code != 0x81 && request_code != 0x01 && !this->charge_flow_requested_()) {
           ESP_LOGI(TAG, "Deferring CB current request %s until config sync is complete",
                    this->current_request_name_(request_code));
           this->pending_current_request_code_ = request_code;
           this->pending_current_request_after_config_ = true;
           break;
         }
-        if (!this->stop_requested_) {
-          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-          if (!this->charge_flow_requested_() && (request_code == 0x30 || request_code == 0xA7)) {
-            ESP_LOGI(TAG, "CB current request %s acknowledged; waiting for explicit local start",
-                     this->current_request_name_(request_code));
-          } else if (this->charge_flow_requested_()) {
-            if (request_code == 0x81) {
-              this->session_active_ = true;
-              this->current_start_released_ = true;
-              this->start_requested_ = false;
-              this->start_requested_ms_ = 0;
-              this->transition_(CHARGING);
-            } else {
-              if (this->state_ != CHARGING && this->state_ != STARTING) {
-                this->transition_(STARTING);
-              }
-              ESP_LOGI(TAG, "Scheduling delayed cmd6B current release after CB current request %s",
-                       this->current_request_name_(request_code));
-              this->schedule_current_release_(800);
-            }
-          } else {
-            ESP_LOGI(TAG, "CB current request acknowledged while state=%s; local session not active yet",
-                     this->state_name_());
-          }
-        } else {
+        if (this->stop_requested_) {
           ESP_LOGI(TAG, "CB current request acknowledged; no current limit sent while stop is requested");
+          break;
+        }
+
+        if (request_code == 0x81 || request_code == 0x01) {
+          this->session_active_ = true;
+          this->current_start_released_ = true;
+          this->start_requested_ = false;
+          this->start_requested_ms_ = 0;
+          this->delayed_current_release_pending_ = false;
+          this->remote_start_pending_ = false;
+          this->transition_(CHARGING);
+          break;
+        }
+
+        if (request_code == 0x80 || request_code == 0xA0 || request_code == 0xC1 || request_code == 0xE7) {
+          this->session_active_ = false;
+          this->start_requested_ = false;
+          this->current_start_released_ = false;
+          this->delayed_current_release_pending_ = false;
+          this->remote_start_pending_ = false;
+          this->start_requested_ms_ = 0;
+          this->transition_(request_code == 0xE7 ? FAULT : IDLE);
+          break;
+        }
+
+        if (request_code == 0x30) {
+          ESP_LOGI(TAG, "CB current request WAITING_FOR_CMD26 acknowledged; not releasing cmd6B");
+          if (!this->charge_flow_requested_()) {
+            this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING : IDLE);
+          }
+          break;
+        }
+
+        if (!this->is_supported_current_request_(request_code)) {
+          ESP_LOGW(TAG, "CB current request state 0x%02X is not a start-release event; ACK only", request_code);
+          break;
+        }
+
+        if (this->current_request_allows_start_(request_code) && !this->current_start_released_) {
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          this->start_requested_ = true;
+          this->remote_start_pending_ = false;
+          if (this->state_ != CHARGING && this->state_ != STARTING) {
+            this->transition_(STARTING);
+          }
+          ESP_LOGI(TAG, "Scheduling delayed cmd6B current release after allowed CB current request %s",
+                   this->current_request_name_(request_code));
+          this->schedule_current_release_(800);
+        } else {
+          ESP_LOGI(TAG, "CB current request %s acknowledged; start guard not satisfied",
+                   this->current_request_name_(request_code));
         }
       }
       break;
@@ -682,19 +688,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          const bool recent_supported_current_request =
-              this->have_last_current_request_code_ && this->is_supported_current_request_(this->last_current_request_code_) &&
-              this->last_current_request_ms_ != 0 && millis() - this->last_current_request_ms_ <= 60000UL;
-          if (recent_supported_current_request && this->startup_config_received_) {
-            ESP_LOGW(TAG, "Remote start failed; falling back to recent cmd6A=%s and scheduling cmd6B current release",
-                     this->current_request_name_(this->last_current_request_code_));
-            this->current_start_released_ = true;
-            this->remote_start_blocked_ = true;
-            this->transition_(STARTING);
-            this->schedule_current_release_(800);
-            break;
-          }
-          ESP_LOGW(TAG, "Remote start failed; waiting for CB cmd6A before sending any current limit");
+          ESP_LOGW(TAG, "Remote start failed; waiting for a new valid start condition before cmd6B");
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->remote_start_blocked_ = true;
@@ -706,19 +700,32 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         const uint8_t result = parse_hex_byte(frame.data, 0);
         ESP_LOGI(TAG, "CB remote stop response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
+        if (result == 0x01) {
+          this->start_requested_ = false;
+          this->session_active_ = false;
+          this->current_start_released_ = false;
+          this->delayed_current_release_pending_ = false;
+          this->remote_start_pending_ = false;
+          this->start_requested_ms_ = 0;
+          this->transition_(FINISHING);
+        }
       }
       break;
     case FrameType::METERING_START:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
-        const bool accept_session = !this->stop_requested_ && this->charge_flow_requested_();
+        const bool accept_session = !this->stop_requested_;
         this->session_active_ = accept_session;
         if (accept_session) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
           this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
           this->current_start_released_ = true;
-          this->transition_(SESSION_STARTING);
+          this->start_requested_ = false;
+          this->delayed_current_release_pending_ = false;
+          this->remote_start_pending_ = false;
+          this->start_requested_ms_ = 0;
+          this->transition_(CHARGING);
         } else {
-          ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; no start requested");
+          ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; stop is requested");
         }
         const std::string data = this->chargebox_firmware_ > 100 ? std::string("01") + hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
                                                                  : std::string("01") + hex_dword(this->session_);
@@ -734,6 +741,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->remote_start_pending_ = false;
         this->start_requested_ms_ = 0;
         this->send_packet_(frame.src, 0x24, "01");
+        this->transition_(FINISHING);
       }
       break;
     case FrameType::METER_PUSH:
@@ -1105,39 +1113,27 @@ void EvboxMaxComponent::send_config_request_() {
 
 bool EvboxMaxComponent::send_known_good_meter_config_restore_(const std::string &config) {
   if (this->chargebox_address_ == 0) return false;
-  if (config.size() < 74) {
+  if (config.size() < 60) {
     ESP_LOGW(TAG, "Refusing serial meter config restore: cmd33 len=%u too short",
              static_cast<unsigned>(config.size()));
     return false;
   }
 
-  // cmd34 is a mapped write command, not a raw cmd33 write-back. Build the
-  // same mapped layout used for remote-start restore, but force the meter
-  // fields to serial/Modbus and physical address/config 1.
-  std::string request(94, '0');
-  const auto copy_field = [&](size_t dst, size_t src, size_t len) {
-    if (dst + len <= request.size() && src + len <= config.size()) {
-      request.replace(dst, len, config.substr(src, len));
-    }
-  };
+  const std::string led_brightness = config.size() >= 38 ? config.substr(36, 2) : "30";
+  const std::string relay = config.size() >= 26 ? config.substr(24, 2) : "03";
+  const std::string phase = config.size() >= 34 ? config.substr(32, 2) : "01";
+  const std::string tethered = config.size() >= 36 ? config.substr(34, 2) : "00";
+  const std::string auto_start = config.size() >= 56 ? config.substr(54, 2) : "01";
+  const std::string enable_cmd_2a = config.size() >= 58 ? config.substr(56, 2) : "00";
+  const std::string auto_stop = config.size() >= 60 ? config.substr(58, 2) : "01";
+  const std::string connection_timeout = config.size() >= 8 ? config.substr(0, 8) : "00000E10";
+  const std::string heartbeat_interval = config.size() >= 16 ? config.substr(8, 8) : "00000384";
+  const std::string meter_update_interval = config.size() >= 24 ? config.substr(16, 8) : "0000000F";
+  const std::string request = std::string("FFFFFFFF") + led_brightness + relay + "0000" + "01" + phase + tethered +
+                              "0100000000000000" + auto_start + enable_cmd_2a + connection_timeout +
+                              heartbeat_interval + meter_update_interval + auto_stop;
 
-  request.replace(0, 8, "03A3F781");
-  copy_field(8, 36, 2);    // LED brightness
-  copy_field(10, 24, 2);   // meter/current mode group
-  copy_field(22, 38, 2);   // secondary autostart-related flag
-  copy_field(48, 6, 2);    // interval/limit field from known captures
-  copy_field(54, 12, 4);   // nominal voltage/current field
-  copy_field(62, 20, 4);   // meter update interval
-  copy_field(76, 68, 6);   // breaker/current calibration block
-  if (config.size() >= 72) copy_field(82, 74, 2);
-  if (config.size() >= 74) copy_field(84, 72, 2);
-
-  request.replace(16, 2, "01");  // cmd34 mapped meter type: serial/Modbus
-  request.replace(18, 2, "01");  // cmd34 mapped physical meter address/config: 1
-  request.replace(38, 2, "01");  // keep card autostart enabled while commissioning
-  request.replace(74, 2, "01");  // keep remote start enabled while commissioning
-
-  ESP_LOGW(TAG, "Commissioning mode: setting CB meter type/address to serial Modbus/1 via mapped cmd34");
+  ESP_LOGW(TAG, "Commissioning mode: setting CB meter config to serial Modbus via cmd34");
   ESP_LOGW(TAG, "Current cmd33=%s", config.c_str());
   ESP_LOGW(TAG, "Patched cmd34=%s", request.c_str());
   this->send_packet_(this->chargebox_address_, 0x34, request);
@@ -1223,16 +1219,16 @@ void EvboxMaxComponent::log_autostart_config_(const std::string &config) {
            byte_26, byte_27, byte_28);
 
   if (config.size() >= 68) {
-    const uint8_t meter_type = parse_hex_byte(config, 30, 0xFF);
-    const uint8_t meter_address = parse_hex_byte(config, 32, 0xFF);
+    const uint8_t meter_config = parse_hex_byte(config, 30, 0xFF);
+    const uint8_t phase_config = parse_hex_byte(config, 32, 0xFF);
     const uint8_t allow_remote_start = parse_hex_byte(config, 66, 0xFF);
-    ESP_LOGI(TAG, "CB config decoded fw140 guess: meter_type(offset30)=0x%02X meter_address(offset32)=0x%02X auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
-             meter_type, meter_address, byte_27, allow_remote_start);
+    ESP_LOGI(TAG, "CB config decoded: meter_config(offset30)=0x%02X phase_config(offset32)=0x%02X auto_start(offset54)=0x%02X allow_remote_start(offset66)=0x%02X",
+             meter_config, phase_config, byte_27, allow_remote_start);
     if (allow_remote_start == 0x00) {
       ESP_LOGW(TAG, "CB config appears to have remote start disabled; cmd31 is expected to return 0x23 failed");
     }
-    if (meter_type != 0x01 || meter_address != 0x01) {
-      ESP_LOGW(TAG, "CB config appears to have non-serial/non-address-1 meter config; kWh meter values are expected to stay zero");
+    if (meter_config != 0x01) {
+      ESP_LOGW(TAG, "CB config appears to have non-serial meter config; kWh meter values are expected to stay zero");
     }
   }
 }
@@ -1277,12 +1273,32 @@ bool EvboxMaxComponent::current_setpoint_allowed_() const {
          this->state_ == CHARGING;
 }
 
+bool EvboxMaxComponent::authorization_allowed_() const {
+  return this->controller_.mode() != CHARGING_MODE_DISABLED;
+}
+
+bool EvboxMaxComponent::automatic_start_allowed_() const {
+  return this->controller_.mode() == CHARGING_MODE_LOAD_BALANCING ||
+         this->controller_.mode() == CHARGING_MODE_PV_SURPLUS;
+}
+
+bool EvboxMaxComponent::current_request_allows_start_(uint8_t code) const {
+  if (!this->authorization_allowed_()) return false;
+  if (code == 0x07) {
+    return this->start_requested_ || this->automatic_start_allowed_();
+  }
+  if (code == 0xA7) {
+    return this->automatic_start_allowed_();
+  }
+  return false;
+}
+
 bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
   if (this->chargebox_hardware_generation_ != 0 && this->chargebox_hardware_generation_ != 3) return false;
   switch (code) {
     case 0x07:
-    case 0x30:
     case 0xA7:
+    case 0x01:
     case 0x81:
       return true;
     default:
