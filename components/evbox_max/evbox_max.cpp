@@ -41,6 +41,8 @@ void EvboxMaxComponent::setup() {
   this->startup_config_received_ = false;
   this->known_good_meter_config_restore_attempted_ = false;
   this->known_good_meter_config_verified_ = false;
+  this->last_meter_config_restore_ms_ = 0;
+  this->meter_config_restore_attempts_ = 0;
   this->remote_start_config_write_attempted_ = false;
   this->remote_start_config_verified_ = false;
   this->last_startup_sync_request_ms_ = 0;
@@ -313,6 +315,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->startup_config_received_ = false;
       this->known_good_meter_config_restore_attempted_ = false;
       this->known_good_meter_config_verified_ = false;
+      this->last_meter_config_restore_ms_ = 0;
+      this->meter_config_restore_attempts_ = 0;
       this->remote_start_config_write_attempted_ = false;
       this->remote_start_config_verified_ = false;
       this->last_startup_sync_request_ms_ = millis();
@@ -342,18 +346,29 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const bool needs_remote_start_restore = allow_remote_start == 0x00;
         const bool needs_serial_meter_restore = meter_type != 0x01;
         if (needs_known_good_meter_restore) {
-          if (!this->known_good_meter_config_restore_attempted_) {
+          this->known_good_meter_config_verified_ = false;
+          const uint32_t now = millis();
+          const uint32_t elapsed = now - this->last_meter_config_restore_ms_;
+          const bool first_attempt = this->meter_config_restore_attempts_ == 0;
+          const bool retry_due = first_attempt || elapsed >= 30000UL;
+          if (retry_due && this->meter_config_restore_attempts_ < 5) {
             if (this->send_known_good_meter_config_restore_(frame.data)) {
               this->known_good_meter_config_restore_attempted_ = true;
+              this->last_meter_config_restore_ms_ = now;
+              this->meter_config_restore_attempts_++;
+              ESP_LOGW(TAG, "Serial meter config restore attempt %u sent; waiting for cmd33 read-back",
+                       this->meter_config_restore_attempts_);
               break;
             }
-          } else if (!this->known_good_meter_config_verified_) {
-            ESP_LOGW(TAG, "Serial meter config restore was attempted, but cmd33 still reports meter_type=0x%02X",
-                     meter_type);
+          } else {
+            const uint32_t retry_in_ms = retry_due ? 0UL : 30000UL - elapsed;
+            ESP_LOGW(TAG, "Serial meter config still not restored: meter_type=0x%02X attempts=%u next_retry_in=%us",
+                     meter_type, this->meter_config_restore_attempts_,
+                     static_cast<unsigned>(retry_in_ms / 1000UL));
           }
         } else {
           this->known_good_meter_config_verified_ = true;
-          ESP_LOGI(TAG, "CB config matches known-good meter snapshot from working kWh log");
+          ESP_LOGI(TAG, "CB config verified: meter type is serial/Modbus");
         }
         if (needs_serial_meter_restore && !needs_known_good_meter_restore) {
           ESP_LOGW(TAG, "CB meter type decode is still provisional although full config matches known-good snapshot");

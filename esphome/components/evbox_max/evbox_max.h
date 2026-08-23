@@ -258,6 +258,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool startup_config_received_{false};
   bool known_good_meter_config_restore_attempted_{false};
   bool known_good_meter_config_verified_{false};
+  uint32_t last_meter_config_restore_ms_{0};
+  uint8_t meter_config_restore_attempts_{0};
   bool remote_start_config_write_attempted_{false};
   bool remote_start_config_verified_{false};
   uint32_t last_startup_sync_request_ms_{0};
