@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@95cc42b46044e038ed5a3477cc267504582abb0a
+  - source: github://Bsc1967/evbox-max-esp32@916eb0334006bde9674ecee5893674974d8c7690
     refresh: 0s
     components:
       - evbox_max
