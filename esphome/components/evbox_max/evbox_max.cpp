@@ -618,18 +618,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(FINISHING);
           } else if (this->start_requested_) {
             this->session_active_ = false;
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
             if (this->finished_reset_pending_) {
               this->finished_reset_pending_ = false;
-              ESP_LOGI(TAG, "CB returned PREPARING_G3 after 4B reset; scheduling delayed cmd31 start trigger");
-              this->schedule_start_trigger_(750);
-            } else if (!this->remote_start_pending_ && !this->current_start_released_ &&
-                       !this->automatic_remote_start_attempted_ && !this->delayed_start_trigger_pending_) {
-              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; scheduling delayed cmd31 trigger");
-              this->schedule_start_trigger_(750);
-            } else if (this->remote_start_pending_ && !this->current_start_released_ && this->start_requested_ms_ != 0 &&
-                       millis() - this->start_requested_ms_ >= 1200UL) {
-              this->remote_start_pending_ = false;
-              ESP_LOGW(TAG, "No cmd31 response while CB stays PREPARING_G3; continuing to wait for CB cmd22/cmd23");
+              ESP_LOGI(TAG, "CB returned PREPARING_G3 after 4B reset; sending cmd22 and scheduling cmd6B current release %.1f A",
+                       this->desired_current_);
+              this->send_unsolicited_authorize_card_();
+              this->schedule_current_release_(2500);
+            } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
+              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; keeping cmd22/cmd6B flow and scheduling current release %.1f A",
+                       this->desired_current_);
+              this->schedule_current_release_(2500);
             }
             this->transition_(STARTING);
           } else {
