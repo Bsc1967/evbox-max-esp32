@@ -263,25 +263,24 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested; waiting for CB-driven authorization/start flow");
 
-  if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
-    this->finished_reset_pending_ = true;
-    this->remote_start_blocked_ = false;
-    this->automatic_remote_start_attempted_ = false;
-    ESP_LOGI(TAG, "Start requested while CB is FINISHED_PLUGGED_IN; sending cmd32 reset before restart");
-    this->send_remote_stop_();
-    this->transition_(PREPARING);
-    return;
-  }
-
   const bool connected_waiting_state =
-      this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x0A && this->cb_cable_max_current_ > 0 &&
+      this->have_last_cb_status_code_ && this->cb_cable_max_current_ > 0 &&
+      (this->last_cb_status_code_ == 0x0A || this->last_cb_status_code_ == 0x4B) &&
       this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30;
   if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start in 0x0A/connected waiting state; scheduling cmd6B current release %.1f A",
-             this->desired_current_);
+    ESP_LOGI(TAG, "Local start in %s/connected waiting state; scheduling cmd6B current release %.1f A",
+             this->cb_status_name_(this->last_cb_status_code_), this->desired_current_);
     this->schedule_current_release_(750);
     this->transition_(STARTING);
+  } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
+    this->finished_reset_pending_ = true;
+    this->remote_start_blocked_ = false;
+    this->automatic_remote_start_attempted_ = false;
+    ESP_LOGI(TAG, "Start requested while CB is FINISHED_PLUGGED_IN without cmd6A=0x30; sending cmd32 reset before restart");
+    this->send_remote_stop_();
+    this->transition_(PREPARING);
+    return;
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
     this->schedule_start_trigger_(750);
     this->transition_(STARTING);
@@ -665,6 +664,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->finished_reset_pending_ = false;
             this->delayed_start_trigger_pending_ = false;
             this->start_requested_ms_ = 0;
+          } else if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30) {
+            this->finished_reset_pending_ = false;
+            this->delayed_start_trigger_pending_ = false;
+            if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
+              this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+              ESP_LOGI(TAG, "CB reports FINISHED_PLUGGED_IN with CONNECTED_WAITING; scheduling cmd6B current release %.1f A",
+                       this->desired_current_);
+              this->schedule_current_release_(750);
+            }
           } else if (!this->finished_reset_pending_) {
             this->finished_reset_pending_ = true;
             this->remote_start_blocked_ = false;
@@ -786,6 +794,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->start_requested_ms_ = 0;
             this->transition_(FINISHING);
           }
+        } else if (this->finished_reset_pending_ && this->start_requested_ && this->have_last_current_request_code_ &&
+                   this->last_current_request_code_ == 0x30) {
+          this->finished_reset_pending_ = false;
+          this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+          ESP_LOGW(TAG, "CB rejected cmd32 reset while CONNECTED_WAITING is present; falling back to cmd6B current release %.1f A",
+                   this->desired_current_);
+          this->schedule_current_release_(750);
+          this->transition_(STARTING);
         }
       }
       break;
