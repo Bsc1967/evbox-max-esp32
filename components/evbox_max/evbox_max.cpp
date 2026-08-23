@@ -1474,10 +1474,12 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   this->update_ev_measurements_();
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);
   const uint8_t phase_mask = this->evbox_active_phase_mask_ != 0 ? this->evbox_active_phase_mask_ : 0x01;
-  const uint16_t l1_tenths = (phase_mask & 0x01) != 0 ? tenths : 0;
-  const uint16_t l2_tenths = (phase_mask & 0x02) != 0 ? tenths : 0;
-  const uint16_t l3_tenths = (phase_mask & 0x04) != 0 ? tenths : 0;
-  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB phases mask=0x%02X L1=%.1fA L2=%.1fA L3=%.1fA",
+  // Geekabit/Ricardo captures send all three cmd6B phase fields. Some G3
+  // firmware stays in CONNECTED_WAITING when inactive phase fields are zero.
+  const uint16_t l1_tenths = tenths;
+  const uint16_t l2_tenths = tenths;
+  const uint16_t l3_tenths = tenths;
+  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB all cmd6B phase fields; detected mask=0x%02X L1=%.1fA L2=%.1fA L3=%.1fA",
            static_cast<float>(tenths) / 10.0f, phase_mask, static_cast<float>(l1_tenths) / 10.0f,
            static_cast<float>(l2_tenths) / 10.0f, static_cast<float>(l3_tenths) / 10.0f);
   this->send_packet_(this->chargebox_address_, 0x6B,
