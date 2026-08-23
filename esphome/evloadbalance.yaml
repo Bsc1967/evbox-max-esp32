@@ -68,6 +68,8 @@ evbox_max:
   relay_janitza_ok_pin: GPIO2
   relay_charging_active_pin: GPIO41
   relay_failsafe_pin: GPIO42
+
+  # EVBox status and protocol diagnostics
   status:
     name: EVBox Status
   state:
@@ -82,30 +84,26 @@ evbox_max:
     name: EVBox CB Status Detail
   current_request_state:
     name: EVBox Current Request State
-  cable_status:
-    name: EVBox Cable Status
-  lock_status:
-    name: EVBox Lock Status
-  meter_status:
-    name: EVBox Meter Status
-  meter_model:
-    name: EVBox Meter Model
-  meter_serial:
-    name: EVBox Meter Serial
   cb_firmware:
     name: EVBox CB Firmware
   cb_hardware_generation:
     name: EVBox CB Hardware Generation
+
+  # Cable, lock and start state from the ChargeBox
+  cable_status:
+    name: EVBox Cable Status
+  cable_max_current:
+    name: EVBox Cable Max Current
+  lock_status:
+    name: EVBox Lock Status
+  cb_lock_state:
+    name: EVBox CB Lock State
   cb_is_charging:
     name: EVBox CB Is Charging
   cb_led_colour:
     name: EVBox CB LED Colour
-  cb_lock_state:
-    name: EVBox CB Lock State
-  cable_max_current:
-    name: EVBox Cable Max Current
-  ev_current:
-    name: EV Current
+
+  # Current limits: requested, sent and returned by the ChargeBox
   current_limit:
     name: EVBox Current Limit
   desired_current:
@@ -114,6 +112,26 @@ evbox_max:
     name: EVBox Commanded Current
   returned_current_limit:
     name: EVBox Returned Current Limit
+
+  # EVBox kWh meter diagnostics and values
+  meter_status:
+    name: EVBox Meter Status
+  meter_model:
+    name: EVBox Meter Model
+  meter_serial:
+    name: EVBox Meter Serial
+  meter_value:
+    name: EVBox Meter Value
+  raw_meter_wh:
+    name: EVBox Raw Meter Wh
+  session_energy:
+    name: EVBox Session Energy
+
+  # EVBox meter live measurements
+  ev_current:
+    name: EVBox Current
+  power:
+    name: EVBox Power
   l1_current:
     name: EVBox L1 Current
   l2_current:
@@ -136,14 +154,6 @@ evbox_max:
     name: EVBox Detected Charge Phases
   active_phase_mask:
     name: EVBox Active Phase Mask
-  power:
-    name: EVBox Power
-  session_energy:
-    name: EV Session Energy
-  meter_value:
-    name: EV Meter Value
-  raw_meter_wh:
-    name: EVBox Raw Meter Wh
   temperature:
     name: EVBox Temperature
 

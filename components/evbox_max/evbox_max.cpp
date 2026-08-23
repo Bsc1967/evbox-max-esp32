@@ -243,6 +243,21 @@ void EvboxMaxComponent::start_session() {
   this->delayed_current_release_pending_ = false;
   this->remote_start_pending_ = false;
   ESP_LOGI(TAG, "Local start requested");
+
+  const bool recent_supported_current_request =
+      this->have_last_current_request_code_ && this->is_supported_current_request_(this->last_current_request_code_) &&
+      this->last_current_request_ms_ != 0 && millis() - this->last_current_request_ms_ <= 60000UL;
+  if (recent_supported_current_request && this->startup_config_received_) {
+    ESP_LOGI(TAG, "Recent CB cmd6A=%s is available; using current-release start path before cmd31",
+             this->current_request_name_(this->last_current_request_code_));
+    this->start_requested_ = true;
+    this->start_requested_ms_ = millis();
+    this->current_start_released_ = true;
+    this->transition_(STARTING);
+    this->schedule_current_release_(800);
+    return;
+  }
+
   if (this->send_remote_start_()) {
     this->start_requested_ = true;
     this->remote_start_pending_ = true;
@@ -597,7 +612,6 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->transition_(FINISHING);
         }
         else if (code == 0x0A) {
-          this->startup_step_ = 0;
           this->start_requested_ = false;
           this->session_active_ = false;
           this->current_start_released_ = false;
@@ -606,7 +620,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->automatic_remote_start_attempted_ = false;
           this->remote_start_pending_ = false;
           this->start_requested_ms_ = 0;
-          this->transition_(FAULT);
+          if (!this->startup_config_received_) {
+            ESP_LOGW(TAG, "CB reports ERROR 0x0A during startup; keeping startup sync alive before declaring FAULT");
+            this->transition_(READ_CONFIG);
+            if (this->startup_step_ == 0) {
+              this->last_startup_sync_request_ms_ = millis();
+              this->schedule_startup_step_(1, 100);
+            }
+          } else if (cable_current > 0 && this->have_last_current_request_code_ &&
+                     this->is_supported_current_request_(this->last_current_request_code_)) {
+            ESP_LOGW(TAG, "CB reports ERROR 0x0A but cmd6A=%s and cable=%uA are present; treating as PREPARING for manual diagnostics",
+                     this->current_request_name_(this->last_current_request_code_), cable_current);
+            this->transition_(PREPARING);
+          } else {
+            this->transition_(FAULT);
+          }
         }
         if (frame.data.size() >= 128) {
           const uint32_t raw_limit = parse_hex_uint(frame.data, 124, 4);
@@ -637,6 +665,18 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
+          const bool recent_supported_current_request =
+              this->have_last_current_request_code_ && this->is_supported_current_request_(this->last_current_request_code_) &&
+              this->last_current_request_ms_ != 0 && millis() - this->last_current_request_ms_ <= 60000UL;
+          if (recent_supported_current_request && this->startup_config_received_) {
+            ESP_LOGW(TAG, "Remote start failed; falling back to recent cmd6A=%s and scheduling cmd6B current release",
+                     this->current_request_name_(this->last_current_request_code_));
+            this->current_start_released_ = true;
+            this->remote_start_blocked_ = true;
+            this->transition_(STARTING);
+            this->schedule_current_release_(800);
+            break;
+          }
           ESP_LOGW(TAG, "Remote start failed; waiting for CB cmd6A before sending any current limit");
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
@@ -1218,8 +1258,9 @@ bool EvboxMaxComponent::current_setpoint_allowed_() const {
 }
 
 bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
-  if (this->chargebox_hardware_generation_ != 3) return false;
+  if (this->chargebox_hardware_generation_ != 0 && this->chargebox_hardware_generation_ != 3) return false;
   switch (code) {
+    case 0x07:
     case 0x30:
     case 0xA7:
     case 0x81:
@@ -1242,22 +1283,24 @@ const char *EvboxMaxComponent::protocol_profile_name_() const {
 const char *EvboxMaxComponent::cb_status_name_(uint8_t code) const {
   switch (code) {
     case 0x02: return "AVAILABLE";
-    case 0x0A: return "ERROR";
-    case 0x17: return "IN_USE_G2";
-    case 0x47: return "PREPARING_G3";
-    case 0x48: return "CHARGING_G3";
-    case 0x4A: return "READY_G3";
-    case 0x4B: return "FINISHED_G3";
+    case 0x0A: return "ERROR_OR_FAULT";
+    case 0x17: return "IN_USE_OR_PLUGGED";
+    case 0x47: return "PREPARING";
+    case 0x48: return "CHARGING";
+    case 0x4A: return "READY";
+    case 0x4B: return "FINISHED_PLUGGED_IN";
     default: return "UNKNOWN";
   }
 }
 
 const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
   switch (code) {
-    case 0x07: return "UNKNOWN_07";
-    case 0x20: return "UNKNOWN_20";
-    case 0x28: return "UNKNOWN_28";
-    case 0x2F: return "UNKNOWN_2F";
+    case 0x00: return "WAITING_FOR_CMD26";
+    case 0x01: return "CHARGING_ACTIVE_G2";
+    case 0x07: return "AUTHORIZED_READY_G2";
+    case 0x20: return "OBSERVED_PRESTART_20";
+    case 0x28: return "OBSERVED_PRESTART_28";
+    case 0x2F: return "OBSERVED_PRESTART_2F";
     case 0x30: return "CONNECTED_WAITING";
     case 0x80: return "UNPLUGGED";
     case 0x81: return "CHARGING";
@@ -1305,8 +1348,19 @@ void EvboxMaxComponent::watchdog_() {
 
 void EvboxMaxComponent::publish_() {
   if (this->status_text_sensor_ != nullptr) {
-    this->status_text_sensor_->publish_state(this->session_active_ ? "Session active" :
-                                            (this->start_requested_ ? "Start requested" : "Ready"));
+    if (this->state_ == FAULT) {
+      this->status_text_sensor_->publish_state("Fault");
+    } else if (this->session_active_) {
+      this->status_text_sensor_->publish_state("Session active");
+    } else if (this->start_requested_) {
+      this->status_text_sensor_->publish_state("Start requested");
+    } else if (this->state_ == PREPARING) {
+      this->status_text_sensor_->publish_state("Cable connected");
+    } else if (this->state_ == FINISHING) {
+      this->status_text_sensor_->publish_state("Finishing");
+    } else {
+      this->status_text_sensor_->publish_state("Ready");
+    }
   }
   if (this->state_text_sensor_ != nullptr) {
     this->state_text_sensor_->publish_state(this->state_name_());
