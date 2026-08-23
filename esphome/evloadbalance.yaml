@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@e7a5c54df6c8029858dcdf6e24868f659a462b02
+  - source: github://Bsc1967/evbox-max-esp32@071c768b92c72988387c493f1122844e6b2ecfdc
     refresh: 0s
     components:
       - evbox_max
@@ -26,6 +26,8 @@ logger:
   logs:
     evbox_max: DEBUG
     janitza_umg604: WARN
+    sensor: WARN
+    text_sensor: WARN
 
 api:
 
