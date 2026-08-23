@@ -283,7 +283,10 @@ void EvboxMaxComponent::start_session() {
     this->transition_(PREPARING);
     return;
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-    this->schedule_start_trigger_(750);
+    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; unsolicited cmd22 sent, scheduling delayed cmd6B current release %.1f A",
+             this->desired_current_);
+    this->schedule_current_release_(2500);
     this->transition_(STARTING);
   } else {
     ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
