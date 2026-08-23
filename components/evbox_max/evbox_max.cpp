@@ -270,9 +270,9 @@ void EvboxMaxComponent::start_session() {
       this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30;
   if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start in %s/connected waiting state; scheduling cmd6B current release %.1f A",
+    ESP_LOGI(TAG, "Local start in %s/connected waiting state after unsolicited cmd22; scheduling delayed cmd6B current release %.1f A",
              this->cb_status_name_(this->last_cb_status_code_), this->desired_current_);
-    this->schedule_current_release_(750);
+    this->schedule_current_release_(2500);
     this->transition_(STARTING);
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
     this->finished_reset_pending_ = true;
