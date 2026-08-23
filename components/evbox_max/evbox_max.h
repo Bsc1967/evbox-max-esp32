@@ -165,6 +165,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void send_config_request_();
   bool send_known_good_meter_config_restore_(const std::string &config);
   bool send_remote_start_config_enable_(const std::string &config);
+  bool send_unsolicited_authorize_card_();
   bool send_remote_start_();
   void send_remote_stop_();
   void log_autostart_config_(const std::string &config);

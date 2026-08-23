@@ -262,6 +262,7 @@ void EvboxMaxComponent::start_session() {
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested; waiting for CB-driven authorization/start flow");
+  this->send_unsolicited_authorize_card_();
 
   const bool connected_waiting_state =
       this->have_last_cb_status_code_ && this->cb_cable_max_current_ > 0 &&
@@ -1321,6 +1322,21 @@ bool EvboxMaxComponent::send_remote_start_() {
   const std::string card_data = (card.substr(0, 22) + std::string(22, '0')).substr(0, 22);
   ESP_LOGI(TAG, "Sending remote start cmd31 to CB card_len=%u card=%s", card_len, card_data.c_str());
   this->send_packet_(this->chargebox_address_, 0x31, hex_byte(card_len) + card_data);
+  return true;
+}
+
+bool EvboxMaxComponent::send_unsolicited_authorize_card_() {
+  if (this->chargebox_address_ == 0) {
+    ESP_LOGW(TAG, "Unsolicited cmd22 authorize requested before ChargeBox address is known");
+    return false;
+  }
+  const std::string card = this->remote_start_card_.empty() ? std::string("000000AS") : this->remote_start_card_;
+  const uint8_t card_len = static_cast<uint8_t>(std::min<size_t>(card.size(), 22));
+  const std::string card_data = (card.substr(0, 22) + std::string(22, '0')).substr(0, 22);
+  const std::string payload = hex_byte(0x01) + hex_byte(card_len) + card_data + "FFFF";
+  ESP_LOGW(TAG, "Sending unsolicited cmd22 authorize card_len=%u card=%s payload=%s",
+           static_cast<unsigned>(card_len), card_data.c_str(), payload.c_str());
+  this->send_packet_(this->chargebox_address_, 0x22, payload);
   return true;
 }
 
