@@ -13,6 +13,8 @@ static constexpr uint8_t ADDR_BROADCAST = 0xBC;
 static constexpr uint16_t ACK = 0xAA00;
 static constexpr uint32_t SETTINGS_MAGIC = 0x45564258UL;
 static constexpr uint16_t SETTINGS_VERSION = 1;
+static const char *const KNOWN_GOOD_METER_CONFIG =
+    "00000E10000003840000001E03000001010030FF000000000000000100010000000003E8010000000100";
 
 void EvboxMaxComponent::setup() {
   this->settings_pref_ = global_preferences->make_preference<StoredSettings>(fnv1_hash("evbox_max_settings"));
@@ -37,6 +39,8 @@ void EvboxMaxComponent::setup() {
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
+  this->known_good_meter_config_restore_attempted_ = false;
+  this->known_good_meter_config_verified_ = false;
   this->remote_start_config_write_attempted_ = false;
   this->remote_start_config_verified_ = false;
   this->last_startup_sync_request_ms_ = 0;
@@ -292,6 +296,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       }
       this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
       this->startup_config_received_ = false;
+      this->known_good_meter_config_restore_attempted_ = false;
+      this->known_good_meter_config_verified_ = false;
       this->remote_start_config_write_attempted_ = false;
       this->remote_start_config_verified_ = false;
       this->last_startup_sync_request_ms_ = millis();
@@ -317,10 +323,24 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
         const uint8_t meter_type = parse_hex_byte(frame.data, 30, 0xFF);
+        const bool needs_known_good_meter_restore = frame.data != KNOWN_GOOD_METER_CONFIG;
         const bool needs_remote_start_restore = allow_remote_start == 0x00;
         const bool needs_serial_meter_restore = meter_type != 0x01;
-        if (needs_serial_meter_restore) {
-          ESP_LOGW(TAG, "CB meter type is not serial according to cmd33 read-back; not writing cmd34 because the meter field mapping is not proven");
+        if (needs_known_good_meter_restore) {
+          if (!this->known_good_meter_config_restore_attempted_) {
+            if (this->send_known_good_meter_config_restore_(frame.data)) {
+              this->known_good_meter_config_restore_attempted_ = true;
+              break;
+            }
+          } else if (!this->known_good_meter_config_verified_) {
+            ESP_LOGW(TAG, "Known-good meter config restore was attempted, but cmd33 still differs from the working snapshot");
+          }
+        } else {
+          this->known_good_meter_config_verified_ = true;
+          ESP_LOGI(TAG, "CB config matches known-good meter snapshot from working kWh log");
+        }
+        if (needs_serial_meter_restore && !needs_known_good_meter_restore) {
+          ESP_LOGW(TAG, "CB meter type decode is still provisional although full config matches known-good snapshot");
         }
         if (needs_remote_start_restore) {
           if (!this->remote_start_config_write_attempted_) {
@@ -1024,6 +1044,22 @@ void EvboxMaxComponent::send_config_request_() {
   if (this->chargebox_address_ == 0) return;
   ESP_LOGI(TAG, "Requesting CB config cmd33");
   this->send_packet_(this->chargebox_address_, 0x33, "");
+}
+
+bool EvboxMaxComponent::send_known_good_meter_config_restore_(const std::string &config) {
+  if (this->chargebox_address_ == 0) return false;
+  const std::string known_good = KNOWN_GOOD_METER_CONFIG;
+  if (config.size() != known_good.size()) {
+    ESP_LOGW(TAG, "Refusing known-good meter config restore: cmd33 len=%u expected=%u",
+             static_cast<unsigned>(config.size()), static_cast<unsigned>(known_good.size()));
+    return false;
+  }
+
+  ESP_LOGW(TAG, "Commissioning mode: restoring known-good CB meter config snapshot from working kWh log");
+  ESP_LOGW(TAG, "Current cmd33=%s", config.c_str());
+  ESP_LOGW(TAG, "Restore cmd34=%s", known_good.c_str());
+  this->send_packet_(this->chargebox_address_, 0x34, known_good);
+  return true;
 }
 
 bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &config) {
