@@ -261,18 +261,21 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; waiting for CB-driven authorization/start flow");
-  this->send_unsolicited_authorize_card_();
+  ESP_LOGI(TAG, "Local start requested; sending cmd31 remote start and waiting for CB ready/session flow");
+  if (this->send_remote_start_()) {
+    this->remote_start_pending_ = true;
+    this->automatic_remote_start_attempted_ = true;
+    this->transition_(STARTING);
+    return;
+  }
 
   const bool connected_waiting_state =
       this->have_last_cb_status_code_ && this->cb_cable_max_current_ > 0 &&
       (this->last_cb_status_code_ == 0x0A || this->last_cb_status_code_ == 0x4B) &&
       this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30;
   if (connected_waiting_state) {
-    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start in %s/connected waiting state after unsolicited cmd22; scheduling delayed cmd6B current release %.1f A",
-             this->cb_status_name_(this->last_cb_status_code_), this->desired_current_);
-    this->schedule_current_release_(2500);
+    ESP_LOGI(TAG, "Local start in %s/connected waiting state; cmd31 could not be sent, waiting for CB ready request",
+             this->cb_status_name_(this->last_cb_status_code_));
     this->transition_(STARTING);
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
     this->finished_reset_pending_ = true;
@@ -283,10 +286,7 @@ void EvboxMaxComponent::start_session() {
     this->transition_(PREPARING);
     return;
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; unsolicited cmd22 sent, scheduling delayed cmd6B current release %.1f A",
-             this->desired_current_);
-    this->schedule_current_release_(2500);
+    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; cmd31 could not be sent, waiting for CB cmd22/cmd6A");
     this->transition_(STARTING);
   } else {
     ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
@@ -621,14 +621,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
             if (this->finished_reset_pending_) {
               this->finished_reset_pending_ = false;
-              ESP_LOGI(TAG, "CB returned PREPARING_G3 after 4B reset; sending cmd22 and scheduling cmd6B current release %.1f A",
-                       this->desired_current_);
-              this->send_unsolicited_authorize_card_();
-              this->schedule_current_release_(2500);
+              ESP_LOGI(TAG, "CB returned PREPARING_G3 after 4B reset; sending cmd31 remote start");
+              if (this->send_remote_start_()) {
+                this->remote_start_pending_ = true;
+                this->automatic_remote_start_attempted_ = true;
+              }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
-              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; keeping cmd22/cmd6B flow and scheduling current release %.1f A",
-                       this->desired_current_);
-              this->schedule_current_release_(2500);
+              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for cmd31 response or CB cmd22/cmd6A");
             }
             this->transition_(STARTING);
           } else {
@@ -780,17 +779,11 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; keeping requested start and falling back to cmd6B release");
+          ESP_LOGW(TAG, "Remote start failed; not sending cmd6B until CB sends a valid cmd22/cmd6A start request");
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->remote_start_blocked_ = true;
-          if (this->cb_cable_max_current_ > 0) {
-            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-            this->schedule_current_release_(250);
-            this->transition_(STARTING);
-          } else {
-            this->transition_(IDLE);
-          }
+          this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
         }
       }
       break;
