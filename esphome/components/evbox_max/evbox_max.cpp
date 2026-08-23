@@ -1105,19 +1105,39 @@ void EvboxMaxComponent::send_config_request_() {
 
 bool EvboxMaxComponent::send_known_good_meter_config_restore_(const std::string &config) {
   if (this->chargebox_address_ == 0) return false;
-  if (config.size() < 32) {
+  if (config.size() < 74) {
     ESP_LOGW(TAG, "Refusing serial meter config restore: cmd33 len=%u too short",
              static_cast<unsigned>(config.size()));
     return false;
   }
 
-  std::string request = config;
-  request.replace(30, 2, "01");  // cmd33 byte 15: meter type serial/Modbus instead of pulse
-  if (request.size() >= 34) {
-    request.replace(32, 2, "01");  // physical meter Modbus address/config must stay at address 1
-  }
+  // cmd34 is a mapped write command, not a raw cmd33 write-back. Build the
+  // same mapped layout used for remote-start restore, but force the meter
+  // fields to serial/Modbus and physical address/config 1.
+  std::string request(94, '0');
+  const auto copy_field = [&](size_t dst, size_t src, size_t len) {
+    if (dst + len <= request.size() && src + len <= config.size()) {
+      request.replace(dst, len, config.substr(src, len));
+    }
+  };
 
-  ESP_LOGW(TAG, "Commissioning mode: setting CB meter type to serial/Modbus address 1 via direct cmd34 config patch");
+  request.replace(0, 8, "03A3F781");
+  copy_field(8, 36, 2);    // LED brightness
+  copy_field(10, 24, 2);   // meter/current mode group
+  copy_field(22, 38, 2);   // secondary autostart-related flag
+  copy_field(48, 6, 2);    // interval/limit field from known captures
+  copy_field(54, 12, 4);   // nominal voltage/current field
+  copy_field(62, 20, 4);   // meter update interval
+  copy_field(76, 68, 6);   // breaker/current calibration block
+  if (config.size() >= 72) copy_field(82, 74, 2);
+  if (config.size() >= 74) copy_field(84, 72, 2);
+
+  request.replace(16, 2, "01");  // cmd34 mapped meter type: serial/Modbus
+  request.replace(18, 2, "01");  // cmd34 mapped physical meter address/config: 1
+  request.replace(38, 2, "01");  // keep card autostart enabled while commissioning
+  request.replace(74, 2, "01");  // keep remote start enabled while commissioning
+
+  ESP_LOGW(TAG, "Commissioning mode: setting CB meter type/address to serial Modbus/1 via mapped cmd34");
   ESP_LOGW(TAG, "Current cmd33=%s", config.c_str());
   ESP_LOGW(TAG, "Patched cmd34=%s", request.c_str());
   this->send_packet_(this->chargebox_address_, 0x34, request);
