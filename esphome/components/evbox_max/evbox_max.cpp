@@ -473,12 +473,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->have_last_current_request_code_ = true;
         this->last_current_request_ms_ = millis();
         this->send_packet_(frame.src, 0x6A, hex_word(ACK));
+        ESP_LOGI(TAG, "CB cmd6A raw data=%s len=%u", frame.data.c_str(), static_cast<unsigned>(frame.data.size()));
         if (frame.data.size() >= 4) {
           const uint8_t request_value = parse_hex_byte(frame.data, 2);
-          ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s value=0x%02X", request_code,
+          ESP_LOGI(TAG, "CB cmd6A decode: byte0 state=0x%02X %s byte1 value=0x%02X", request_code,
                    this->current_request_name_(request_code), request_value);
         } else {
-          ESP_LOGI(TAG, "CB current request cmd6A state=0x%02X %s", request_code,
+          ESP_LOGI(TAG, "CB cmd6A decode: byte0 state=0x%02X %s", request_code,
                    this->current_request_name_(request_code));
         }
         if (!this->startup_config_received_ && this->is_supported_current_request_(request_code) &&
@@ -572,6 +573,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t led_colour = parse_hex_byte(frame.data, 8);
         const uint8_t lock_state = parse_hex_byte(frame.data, 10);
         const uint8_t cable_current = parse_hex_byte(frame.data, 12);
+        ESP_LOGI(TAG, "CB cmd26 raw data=%s len=%u", frame.data.c_str(), static_cast<unsigned>(frame.data.size()));
+        ESP_LOGI(TAG,
+                 "CB cmd26 decode: byte0 status=0x%02X %s byte3 is_charging=%u byte4 led=0x%02X byte5 lock=%u byte6 cable=%uA",
+                 code, this->cb_status_name_(code), is_charging, led_colour, lock_state, cable_current);
         this->cb_is_charging_ = is_charging;
         this->cb_led_colour_ = led_colour;
         this->cb_lock_state_ = lock_state;
@@ -927,24 +932,40 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   if (data.size() < 26) return;
 
   if (data.size() >= 56) {
-    this->temperature_c_ = static_cast<float>(parse_hex_uint(data, 52, 4)) / 10.0f;
+    const uint32_t raw_temperature = parse_hex_uint(data, 52, 4);
+    this->temperature_c_ = static_cast<float>(raw_temperature) / 10.0f;
+    ESP_LOGD(TAG, "CB cmd26 raw temperature offset52=%04X -> %.1fC", static_cast<unsigned>(raw_temperature), this->temperature_c_);
   }
 
   if (data.size() >= 132) {
-    const uint32_t measurement_block = parse_hex_uint(data, 68, 8) | parse_hex_uint(data, 76, 8) |
-                                       parse_hex_uint(data, 84, 8) | parse_hex_uint(data, 92, 8) |
-                                       parse_hex_uint(data, 100, 8);
+    const uint32_t raw_l1_voltage = parse_hex_uint(data, 68, 4);
+    const uint32_t raw_l2_voltage = parse_hex_uint(data, 72, 4);
+    const uint32_t raw_l3_voltage = parse_hex_uint(data, 76, 4);
+    const uint32_t raw_l1_current = parse_hex_uint(data, 80, 4);
+    const uint32_t raw_l2_current = parse_hex_uint(data, 84, 4);
+    const uint32_t raw_l3_current = parse_hex_uint(data, 88, 4);
+    const uint32_t raw_socket_temperature = parse_hex_uint(data, 92, 4);
+    const uint32_t raw_pf1 = parse_hex_uint(data, 96, 4);
+    const uint32_t raw_pf2 = parse_hex_uint(data, 100, 4);
+    const uint32_t raw_pf3 = parse_hex_uint(data, 104, 4);
+    const uint32_t measurement_block = raw_l1_voltage | raw_l2_voltage | raw_l3_voltage | raw_l1_current |
+                                       raw_l2_current | raw_l3_current | raw_socket_temperature | raw_pf1 | raw_pf2 |
+                                       raw_pf3;
+    ESP_LOGD(TAG,
+             "CB cmd26 meter raw offsets: V68/72/76=%04X/%04X/%04X I80/84/88=%04X/%04X/%04X socket92=%04X PF96/100/104=%04X/%04X/%04X",
+             static_cast<unsigned>(raw_l1_voltage), static_cast<unsigned>(raw_l2_voltage), static_cast<unsigned>(raw_l3_voltage), static_cast<unsigned>(raw_l1_current), static_cast<unsigned>(raw_l2_current), static_cast<unsigned>(raw_l3_current),
+             static_cast<unsigned>(raw_socket_temperature), static_cast<unsigned>(raw_pf1), static_cast<unsigned>(raw_pf2), static_cast<unsigned>(raw_pf3));
     if (measurement_block != 0) {
-      this->ev_l1_voltage_v_ = static_cast<float>(parse_hex_uint(data, 68, 4));
-      this->ev_l2_voltage_v_ = static_cast<float>(parse_hex_uint(data, 72, 4));
-      this->ev_l3_voltage_v_ = static_cast<float>(parse_hex_uint(data, 76, 4));
-      this->ev_l1_current_a_ = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
-      this->ev_l2_current_a_ = static_cast<float>(parse_hex_uint(data, 84, 4)) / 100.0f;
-      this->ev_l3_current_a_ = static_cast<float>(parse_hex_uint(data, 88, 4)) / 100.0f;
-      this->ev_l1_power_factor_ = static_cast<float>(parse_hex_uint(data, 96, 4)) / 1000.0f;
-      this->ev_l2_power_factor_ = static_cast<float>(parse_hex_uint(data, 100, 4)) / 1000.0f;
-      this->ev_l3_power_factor_ = static_cast<float>(parse_hex_uint(data, 104, 4)) / 1000.0f;
-      const float socket_temperature_c = static_cast<float>(parse_hex_uint(data, 92, 4));
+      this->ev_l1_voltage_v_ = static_cast<float>(raw_l1_voltage);
+      this->ev_l2_voltage_v_ = static_cast<float>(raw_l2_voltage);
+      this->ev_l3_voltage_v_ = static_cast<float>(raw_l3_voltage);
+      this->ev_l1_current_a_ = static_cast<float>(raw_l1_current) / 100.0f;
+      this->ev_l2_current_a_ = static_cast<float>(raw_l2_current) / 100.0f;
+      this->ev_l3_current_a_ = static_cast<float>(raw_l3_current) / 100.0f;
+      this->ev_l1_power_factor_ = static_cast<float>(raw_pf1) / 1000.0f;
+      this->ev_l2_power_factor_ = static_cast<float>(raw_pf2) / 1000.0f;
+      this->ev_l3_power_factor_ = static_cast<float>(raw_pf3) / 1000.0f;
+      const float socket_temperature_c = static_cast<float>(raw_socket_temperature);
       ESP_LOGD(TAG, "CB meter state V %.0f/%.0f/%.0f I %.2f/%.2f/%.2f chassis %.1fC socket %.1fC PF %.3f/%.3f/%.3f",
                this->ev_l1_voltage_v_, this->ev_l2_voltage_v_, this->ev_l3_voltage_v_, this->ev_l1_current_a_,
                this->ev_l2_current_a_, this->ev_l3_current_a_, this->temperature_c_, socket_temperature_c,
@@ -958,6 +979,7 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
 
   const uint32_t raw_meter = parse_hex_uint(data, 18, 8);
   this->raw_meter_wh_ = static_cast<float>(raw_meter);
+  ESP_LOGD(TAG, "CB cmd26 meter counter raw offset18=%08X -> %u Wh", static_cast<unsigned>(raw_meter), static_cast<unsigned>(raw_meter));
   if (raw_meter == 0) {
     ESP_LOGD(TAG, "CB cmd26 meter counter is zero; keeping previous kWh value %.3f", this->meter_value_kwh_);
     return;
