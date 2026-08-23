@@ -690,6 +690,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
           ESP_LOGW(TAG, "Remote start failed; waiting for a new valid start condition before cmd6B");
+          this->start_requested_ = false;
+          this->start_requested_ms_ = 0;
           this->delayed_current_release_pending_ = false;
           this->current_start_released_ = false;
           this->remote_start_blocked_ = true;
