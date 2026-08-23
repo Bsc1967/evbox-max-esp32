@@ -624,6 +624,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
         } else if (code == 0x4B) {
+          this->stop_requested_ = false;
           this->session_active_ = false;
           this->start_requested_ = false;
           this->current_start_released_ = false;
@@ -632,7 +633,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->automatic_remote_start_attempted_ = false;
           this->remote_start_pending_ = false;
           this->start_requested_ms_ = 0;
-          this->transition_(FINISHING);
+          this->transition_(cable_current > 0 ? PREPARING : IDLE);
         }
         else if (code == 0x0A) {
           this->start_requested_ = false;
