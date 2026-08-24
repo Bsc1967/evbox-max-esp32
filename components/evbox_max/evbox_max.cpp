@@ -261,9 +261,8 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; sending autostart cmd22 authorize before cmd31 remote start");
+  ESP_LOGI(TAG, "Local start requested; sending autostart cmd22 authorize and waiting for CB cmd6A flow");
   if (this->send_unsolicited_authorize_card_()) {
-    this->schedule_start_trigger_(500);
     this->transition_(STARTING);
     return;
   }
@@ -517,6 +516,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->remote_start_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(request_code == 0xE7 ? FAULT : IDLE);
+          break;
+        }
+
+        if (request_code == 0x37) {
+          if (this->start_requested_) {
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; waiting for CONNECTED_WAITING before cmd6B");
+            this->transition_(STARTING);
+          } else {
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK without active start request; ACK only");
+          }
           break;
         }
 
@@ -780,7 +789,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->transition_(STARTING);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
-          ESP_LOGW(TAG, "Remote start failed; not sending cmd6B until CB sends a valid cmd22/cmd6A start request");
+          ESP_LOGW(TAG, "Remote start failed; waiting for CB autostart cmd22/cmd6A flow");
           this->start_requested_ = false;
           this->start_requested_ms_ = 0;
           this->delayed_current_release_pending_ = false;
@@ -1471,6 +1480,7 @@ bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
   switch (code) {
     case 0x07:
     case 0xA7:
+    case 0x37:
     case 0x01:
     case 0x81:
       return true;
@@ -1511,6 +1521,7 @@ const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
     case 0x28: return "OBSERVED_PRESTART_28";
     case 0x2F: return "OBSERVED_PRESTART_2F";
     case 0x30: return "CONNECTED_WAITING";
+    case 0x37: return "AUTHORIZED_WAIT_LOCK";
     case 0x80: return "UNPLUGGED";
     case 0x81: return "CHARGING";
     case 0xA0: return "AVAILABLE";
