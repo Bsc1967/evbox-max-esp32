@@ -679,6 +679,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->finished_reset_pending_ = false;
             this->delayed_start_trigger_pending_ = false;
             this->start_requested_ms_ = 0;
+          } else if (this->remote_start_blocked_) {
+            ESP_LOGW(TAG, "CB reports FINISHED_PLUGGED_IN/CONNECTED_WAITING but remote start is blocked; not sending cmd6B");
           } else if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30) {
             this->finished_reset_pending_ = false;
             this->delayed_start_trigger_pending_ = false;
@@ -780,8 +782,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
           ESP_LOGW(TAG, "Remote start failed; not sending cmd6B until CB sends a valid cmd22/cmd6A start request");
+          this->start_requested_ = false;
+          this->start_requested_ms_ = 0;
           this->delayed_current_release_pending_ = false;
+          this->delayed_start_trigger_pending_ = false;
           this->current_start_released_ = false;
+          this->finished_reset_pending_ = false;
+          this->remote_start_pending_ = false;
           this->remote_start_blocked_ = true;
           this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
         }
