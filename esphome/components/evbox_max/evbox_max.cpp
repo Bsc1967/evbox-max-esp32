@@ -261,10 +261,9 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; sending cmd31 remote start and waiting for CB ready/session flow");
-  if (this->send_remote_start_()) {
-    this->remote_start_pending_ = true;
-    this->automatic_remote_start_attempted_ = true;
+  ESP_LOGI(TAG, "Local start requested; sending autostart cmd22 authorize before cmd31 remote start");
+  if (this->send_unsolicited_authorize_card_()) {
+    this->schedule_start_trigger_(500);
     this->transition_(STARTING);
     return;
   }
