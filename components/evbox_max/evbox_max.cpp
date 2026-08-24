@@ -261,8 +261,10 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; sending autostart cmd22 authorize and waiting for CB cmd6A flow");
-  if (this->send_unsolicited_authorize_card_()) {
+  ESP_LOGI(TAG, "Local start requested; sending cmd31 remote start and waiting for CB cmd6A flow");
+  if (this->send_remote_start_()) {
+    this->remote_start_pending_ = true;
+    this->automatic_remote_start_attempted_ = true;
     this->transition_(STARTING);
     return;
   }
@@ -785,8 +787,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->remote_start_pending_ = false;
         if (result == 0x01 && !this->stop_requested_) {
           this->start_requested_ = true;
+          this->remote_start_blocked_ = false;
           if (this->state_ != CHARGING && this->state_ != SESSION_STARTING) {
             this->transition_(STARTING);
+          }
+          if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30 &&
+              this->cb_cable_max_current_ > 0 && !this->current_start_released_ &&
+              !this->delayed_current_release_pending_) {
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            ESP_LOGI(TAG, "Remote start accepted while CB is already CONNECTED_WAITING; scheduling cmd6B %.1f A",
+                     this->desired_current_);
+            this->schedule_current_release_(800);
           }
         } else if (!this->stop_requested_ && this->start_requested_) {
           ESP_LOGW(TAG, "Remote start failed; waiting for CB autostart cmd22/cmd6A flow");
