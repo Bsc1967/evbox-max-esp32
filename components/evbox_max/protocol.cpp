@@ -120,8 +120,8 @@ bool FrameParser::parse_buffer_(Frame *frame) {
   text.reserve(this->buffer_.size());
   for (size_t i = 0; i + 1 < this->buffer_.size(); i++) {
     const uint8_t byte = this->buffer_[i];
-    if (!((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'F') || (byte >= 'a' && byte <= 'f'))) return false;
-    text.push_back(static_cast<char>(byte >= 'a' && byte <= 'f' ? byte - 32 : byte));
+    if (byte < 0x20 || byte > 0x7E) return false;
+    text.push_back(static_cast<char>(byte));
   }
   if (text.size() < 10) return false;
 
@@ -131,9 +131,10 @@ bool FrameParser::parse_buffer_(Frame *frame) {
   if (got_checksum != evbox_checksum(payload) || got_parity != evbox_parity(payload)) return false;
   if (payload.size() < 6) return false;
 
-  frame->dst = parse_hex_byte(payload, 0);
-  frame->src = parse_hex_byte(payload, 2);
-  frame->cmd = parse_hex_byte(payload, 4);
+  frame->dst = parse_hex_byte(payload, 0, 0xFF);
+  frame->src = parse_hex_byte(payload, 2, 0xFF);
+  frame->cmd = parse_hex_byte(payload, 4, 0xFF);
+  if (frame->dst == 0xFF || frame->src == 0xFF || frame->cmd == 0xFF) return false;
   frame->address = frame->src;
   frame->type = frame_type_for_cmd(frame->cmd);
   frame->data = payload.substr(6);
