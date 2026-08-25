@@ -41,6 +41,7 @@ void EvboxMaxComponent::setup() {
   this->delayed_start_trigger_due_ms_ = 0;
   this->delayed_current_release_due_ms_ = 0;
   this->start_requested_ms_ = 0;
+  this->start_stall_logged_ = false;
   this->remote_start_sent_ms_ = 0;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
@@ -120,6 +121,17 @@ void EvboxMaxComponent::loop() {
         this->send_current_setpoint_(this->desired_current_);
       }
     }
+    if (this->start_requested_ && this->current_start_released_ && !this->session_active_ &&
+        !this->start_stall_logged_ && this->start_requested_ms_ != 0 &&
+        now - this->start_requested_ms_ >= 10000UL) {
+      ESP_LOGW(TAG,
+               "Start flow stalled after cmd6B current release: last cmd26=%s last cmd6A=%s lock=%u cable=%uA commanded=%.1fA returned=%.1fA. Protocol accepted the setpoint, but CB has not sent cmd23/charging yet.",
+               this->have_last_cb_status_code_ ? this->cb_status_name_(this->last_cb_status_code_) : "UNKNOWN",
+               this->have_last_current_request_code_ ? this->current_request_name_(this->last_current_request_code_) : "UNKNOWN",
+               this->cb_lock_state_, this->cb_cable_max_current_, this->commanded_current_,
+               std::isnan(this->returned_current_limit_) ? -1.0f : this->returned_current_limit_);
+      this->start_stall_logged_ = true;
+    }
     if (this->start_requested_ && !this->session_active_ && this->start_requested_ms_ != 0 &&
         now - this->start_requested_ms_ >= 60000UL) {
       ESP_LOGW(TAG, "Start request timed out; last cmd26=%s last cmd6A=%s",
@@ -133,6 +145,7 @@ void EvboxMaxComponent::loop() {
       this->remote_start_pending_ = false;
       this->remote_start_sent_ms_ = 0;
       this->remote_start_timeout_logged_ = false;
+      this->start_stall_logged_ = false;
       this->start_requested_ms_ = 0;
       if (!this->stop_requested_ && this->state_ != CHARGING) {
         this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING
@@ -263,6 +276,7 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_pending_ = false;
   this->remote_start_sent_ms_ = 0;
   this->remote_start_timeout_logged_ = false;
+  this->start_stall_logged_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested; using CB autostart flow, waiting for cmd22/cmd6A and not sending cmd31");
@@ -301,6 +315,7 @@ void EvboxMaxComponent::stop_session() {
   this->delayed_current_release_pending_ = false;
   this->remote_start_pending_ = false;
   this->start_requested_ms_ = 0;
+  this->start_stall_logged_ = false;
   this->send_remote_stop_();
   this->transition_(FINISHING);
 }
@@ -521,9 +536,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         }
 
         if (request_code == 0x37) {
-          if (this->start_requested_) {
-            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; waiting for CONNECTED_WAITING before cmd6B");
+          if (this->start_requested_ && !this->current_start_released_ && !this->delayed_current_release_pending_) {
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; scheduling delayed cmd6B current release %.1f A",
+                     this->desired_current_);
+            this->schedule_current_release_(800);
             this->transition_(STARTING);
+          } else if (this->start_requested_) {
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; current release already scheduled or sent");
           } else {
             ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK without active start request; ACK only");
           }
@@ -1008,6 +1028,9 @@ void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
   if (meter_kwh <= 0.0f || meter_kwh > 1000000.0f) return;
 
   this->meter_value_kwh_ = meter_kwh;
+  if (this->meter_status_ == "UNKNOWN" || this->meter_status_ == "NACK") {
+    this->meter_status_ = "LIVE_FROM_CMD26";
+  }
   if (this->session_active_ && this->have_session_start_meter_ && meter_kwh >= this->session_start_meter_kwh_) {
     this->session_energy_kwh_ = meter_kwh - this->session_start_meter_kwh_;
   }
@@ -1480,6 +1503,9 @@ bool EvboxMaxComponent::current_request_allows_start_(uint8_t code) const {
   if (!this->authorization_allowed_()) return false;
   if (code == 0x07) {
     return this->start_requested_ || this->automatic_start_allowed_();
+  }
+  if (code == 0x37) {
+    return this->start_requested_;
   }
   if (code == 0xA7) {
     return this->automatic_start_allowed_();

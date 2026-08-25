@@ -251,6 +251,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t last_rx_ms_{0};
   uint32_t last_periodic_cmd18_ms_{0};
   uint32_t start_requested_ms_{0};
+  bool start_stall_logged_{false};
   uint32_t remote_start_sent_ms_{0};
   uint8_t last_cb_status_code_{0};
   bool have_last_cb_status_code_{false};
