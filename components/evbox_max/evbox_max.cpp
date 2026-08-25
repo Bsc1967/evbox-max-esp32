@@ -767,9 +767,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         }
         this->update_meter_from_state_(frame.data);
-        const bool g3_like_state = frame.data.size() >= 128;
-        const std::string ack_data = g3_like_state ? hex_dword(this->session_) + hex_dword(this->seconds_since_2000_())
-                                                   : hex_dword(this->session_);
+        const std::string ack_data = frame.data.size() >= 264 ? std::string("0000000000000000") : std::string("00000000");
+        ESP_LOGD(TAG, "TX cmd26 ACK payload=%s for cmd26 data_len=%u", ack_data.c_str(),
+                 static_cast<unsigned>(frame.data.size()));
         this->send_packet_(frame.src, 0x26, ack_data);
       }
       break;
