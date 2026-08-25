@@ -673,8 +673,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             this->session_active_ = false;
             this->transition_(FINISHING);
           } else if (this->start_requested_ || this->current_start_released_ || this->session_active_) {
-            ESP_LOGI(TAG, "CB reports READY during active start flow; holding STARTING until CHARGING/cmd23 confirms");
-            this->transition_(STARTING);
+            ESP_LOGI(TAG, "CB reports READY during active start flow; waiting for cmd26 CHARGING/contactor feedback");
+            this->transition_(this->state_ == SESSION_STARTING || this->current_start_released_ ? SESSION_STARTING : STARTING);
           } else {
             this->session_active_ = false;
             this->transition_(IDLE);
@@ -867,16 +867,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::METERING_START:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         const bool accept_session = !this->stop_requested_;
-        this->session_active_ = accept_session;
         if (accept_session) {
           this->session_start_meter_kwh_ = this->meter_value_kwh_;
           this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
           this->current_start_released_ = true;
-          this->start_requested_ = false;
+          this->start_requested_ = true;
+          if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
+          this->session_active_ = false;
           this->delayed_current_release_pending_ = false;
           this->remote_start_pending_ = false;
-          this->start_requested_ms_ = 0;
-          this->transition_(CHARGING);
+          ESP_LOGI(TAG, "CB metering start accepted; waiting for cmd26 CHARGING before marking session active");
+          this->transition_(SESSION_STARTING);
         } else {
           ESP_LOGI(TAG, "CB metering start acknowledged without activating local session; stop is requested");
         }
@@ -1508,6 +1509,9 @@ bool EvboxMaxComponent::current_request_allows_start_(uint8_t code) const {
   if (code == 0x37) {
     return this->start_requested_;
   }
+  if (code == 0x77) {
+    return false;
+  }
   if (code == 0xA7) {
     return this->automatic_start_allowed_();
   }
@@ -1520,6 +1524,7 @@ bool EvboxMaxComponent::is_supported_current_request_(uint8_t code) const {
     case 0x07:
     case 0xA7:
     case 0x37:
+    case 0x77:
     case 0x01:
     case 0x81:
       return true;
@@ -1561,6 +1566,7 @@ const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
     case 0x2F: return "OBSERVED_PRESTART_2F";
     case 0x30: return "CONNECTED_WAITING";
     case 0x37: return "AUTHORIZED_WAIT_LOCK";
+    case 0x77: return "OBSERVED_READY_77";
     case 0x80: return "UNPLUGGED";
     case 0x81: return "CHARGING";
     case 0xA0: return "AVAILABLE";
