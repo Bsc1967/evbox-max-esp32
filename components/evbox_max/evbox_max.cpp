@@ -672,8 +672,9 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           if (this->stop_requested_) {
             this->session_active_ = false;
             this->transition_(FINISHING);
-          } else if (this->start_requested_) {
-            this->transition_(AUTHORIZED);
+          } else if (this->start_requested_ || this->current_start_released_ || this->session_active_) {
+            ESP_LOGI(TAG, "CB reports READY during active start flow; holding STARTING until CHARGING/cmd23 confirms");
+            this->transition_(STARTING);
           } else {
             this->session_active_ = false;
             this->transition_(IDLE);
