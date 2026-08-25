@@ -27,6 +27,7 @@ void EvboxMaxComponent::setup() {
   this->remote_start_blocked_ = false;
   this->automatic_remote_start_attempted_ = false;
   this->remote_start_pending_ = false;
+  this->remote_start_timeout_logged_ = false;
   this->delayed_start_trigger_pending_ = false;
   this->active_current_ = 0.0f;
   this->desired_current_ = 0.0f;
@@ -40,6 +41,7 @@ void EvboxMaxComponent::setup() {
   this->delayed_start_trigger_due_ms_ = 0;
   this->delayed_current_release_due_ms_ = 0;
   this->start_requested_ms_ = 0;
+  this->remote_start_sent_ms_ = 0;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
@@ -129,9 +131,8 @@ void EvboxMaxComponent::loop() {
       this->finished_reset_pending_ = false;
       this->delayed_start_trigger_pending_ = false;
       this->remote_start_pending_ = false;
-      if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-        this->remote_start_blocked_ = true;
-      }
+      this->remote_start_sent_ms_ = 0;
+      this->remote_start_timeout_logged_ = false;
       this->start_requested_ms_ = 0;
       if (!this->stop_requested_ && this->state_ != CHARGING) {
         this->transition_(this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47 ? PREPARING
@@ -144,6 +145,7 @@ void EvboxMaxComponent::loop() {
   this->watchdog_();
   this->run_startup_sequence_();
   this->run_delayed_start_trigger_();
+  this->run_remote_start_timeout_();
   this->run_delayed_current_release_();
   this->update_relays_();
 
@@ -265,6 +267,8 @@ void EvboxMaxComponent::start_session() {
   if (this->send_remote_start_()) {
     this->remote_start_pending_ = true;
     this->automatic_remote_start_attempted_ = true;
+    this->remote_start_sent_ms_ = millis();
+    this->remote_start_timeout_logged_ = false;
     this->transition_(STARTING);
     return;
   }
@@ -635,6 +639,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               if (this->send_remote_start_()) {
                 this->remote_start_pending_ = true;
                 this->automatic_remote_start_attempted_ = true;
+                this->remote_start_sent_ms_ = millis();
+                this->remote_start_timeout_logged_ = false;
               }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
               ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for cmd31 response or CB cmd22/cmd6A");
@@ -785,6 +791,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const uint8_t result = parse_hex_byte(frame.data, 0);
         ESP_LOGI(TAG, "CB remote start response=0x%02X %s", result, result == 0x01 ? "success" : "failed");
         this->remote_start_pending_ = false;
+        this->remote_start_sent_ms_ = 0;
+        this->remote_start_timeout_logged_ = false;
         if (result == 0x01 && !this->stop_requested_) {
           this->start_requested_ = true;
           this->remote_start_blocked_ = false;
@@ -808,6 +816,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->current_start_released_ = false;
           this->finished_reset_pending_ = false;
           this->remote_start_pending_ = false;
+          this->remote_start_sent_ms_ = 0;
+          this->remote_start_timeout_logged_ = false;
           this->remote_start_blocked_ = true;
           this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
         }
@@ -1423,7 +1433,24 @@ void EvboxMaxComponent::run_delayed_start_trigger_() {
   if (this->send_remote_start_()) {
     this->remote_start_pending_ = true;
     this->automatic_remote_start_attempted_ = true;
+    this->remote_start_sent_ms_ = millis();
+    this->remote_start_timeout_logged_ = false;
   }
+}
+
+void EvboxMaxComponent::run_remote_start_timeout_() {
+  if (!this->remote_start_pending_ || this->remote_start_sent_ms_ == 0 || this->remote_start_timeout_logged_) return;
+
+  const uint32_t now = millis();
+  if (now - this->remote_start_sent_ms_ < 5000UL) return;
+
+  this->remote_start_timeout_logged_ = true;
+  this->remote_start_pending_ = false;
+  this->remote_start_sent_ms_ = 0;
+  this->remote_start_blocked_ = false;
+  ESP_LOGW(TAG, "cmd31 timeout: no CB remote-start response after 5s; last cmd26=%s last cmd6A=%s, waiting for CB cmd22/cmd6A",
+           this->have_last_cb_status_code_ ? this->cb_status_name_(this->last_cb_status_code_) : "UNKNOWN",
+           this->have_last_current_request_code_ ? this->current_request_name_(this->last_current_request_code_) : "UNKNOWN");
 }
 
 void EvboxMaxComponent::schedule_current_release_(uint32_t delay_ms) {
