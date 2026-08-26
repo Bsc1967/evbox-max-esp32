@@ -400,6 +400,13 @@ void EvboxMaxComponent::stop_session() {
   this->pv_surplus_ready_since_ms_ = 0;
   this->pv_surplus_low_since_ms_ = 0;
   this->pv_pause_hold_logged_ = false;
+  const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
+                                  this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
+                                  this->state_ == PAUSED || this->active_current_ > 0.0f;
+  if (charge_flow_active && this->chargebox_address_ != 0) {
+    ESP_LOGI(TAG, "Local stop requested; suspending charge current with cmd6B 0.0 A before cmd32");
+    this->send_current_setpoint_(0.0f);
+  }
   this->send_remote_stop_();
   this->transition_(FINISHING);
 }
@@ -775,35 +782,50 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         }
         else if (code == 0x48) {
-          this->stop_requested_ = false;
-          this->session_active_ = true;
-          this->start_requested_ = false;
-          this->current_start_released_ = true;
-          this->delayed_current_release_pending_ = false;
-          this->finished_reset_pending_ = false;
-          this->delayed_start_trigger_pending_ = false;
-          this->remote_start_blocked_ = false;
-          this->automatic_remote_start_attempted_ = false;
-          this->remote_start_pending_ = false;
-          this->start_requested_ms_ = 0;
-          this->transition_(CHARGING);
+          if (this->stop_requested_) {
+            this->session_active_ = true;
+            this->start_requested_ = false;
+            this->delayed_current_release_pending_ = false;
+            this->remote_start_pending_ = false;
+            ESP_LOGI(TAG, "CB still reports CHARGING after local stop; keeping stop active and waiting for 0A/paused state");
+            this->transition_(FINISHING);
+          } else {
+            this->stop_requested_ = false;
+            this->session_active_ = true;
+            this->start_requested_ = false;
+            this->current_start_released_ = true;
+            this->delayed_current_release_pending_ = false;
+            this->finished_reset_pending_ = false;
+            this->delayed_start_trigger_pending_ = false;
+            this->remote_start_blocked_ = false;
+            this->automatic_remote_start_attempted_ = false;
+            this->remote_start_pending_ = false;
+            this->start_requested_ms_ = 0;
+            this->transition_(CHARGING);
+          }
         } else if (code == 0x49) {
-          this->stop_requested_ = false;
-          this->session_active_ = true;
+          const bool local_stop_active = this->stop_requested_;
+          this->stop_requested_ = local_stop_active;
+          this->session_active_ = !local_stop_active;
           this->start_requested_ = false;
-          this->current_start_released_ = true;
+          this->current_start_released_ = !local_stop_active;
           this->delayed_current_release_pending_ = false;
           this->finished_reset_pending_ = false;
           this->delayed_start_trigger_pending_ = false;
           this->remote_start_pending_ = false;
           this->returned_current_limit_ = 0.0f;
           this->current_limit_returned_ = true;
-          if (this->controller_.mode() == CHARGING_MODE_PV_SURPLUS) {
+          if (local_stop_active) {
+            this->pv_pause_active_ = false;
+            this->pv_status_ = "USER_STOPPED";
+            this->limit_reason_ = "USER_STOP";
+          } else if (this->controller_.mode() == CHARGING_MODE_PV_SURPLUS) {
             this->pv_pause_active_ = true;
             this->pv_status_ = "PV_PAUSED";
             this->limit_reason_ = "PV_BELOW_6A_PAUSED";
           }
-          ESP_LOGI(TAG, "CB reports 0x49 with locked cable and no charging current; treating as paused/suspended session");
+          ESP_LOGI(TAG, "CB reports 0x49 with locked cable and no charging current; treating as %s",
+                   local_stop_active ? "manual stop/suspended session" : "paused/suspended session");
           this->transition_(PAUSED);
         } else if (code == 0x4B) {
           this->stop_requested_ = false;
@@ -973,6 +995,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
                    this->desired_current_);
           this->schedule_current_release_(750);
           this->transition_(STARTING);
+        } else if (this->stop_requested_) {
+          ESP_LOGW(TAG, "CB rejected cmd32 stop; keeping cmd6B 0.0 A stop active and waiting for cmd26 paused/finished");
         }
       }
       break;
