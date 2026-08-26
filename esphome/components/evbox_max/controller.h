@@ -50,6 +50,7 @@ class ChargeController {
   FailsafeMode failsafe_mode() const { return this->failsafe_mode_; }
   float failsafe_current() const { return this->failsafe_current_; }
 
+  float calculate_requested_current(const ControlInputs &inputs) const;
   float calculate_current(const ControlInputs &inputs) const;
 
  protected:

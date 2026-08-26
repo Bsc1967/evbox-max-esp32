@@ -6,7 +6,7 @@
 namespace esphome {
 namespace evbox_max {
 
-float ChargeController::calculate_current(const ControlInputs &inputs) const {
+float ChargeController::calculate_requested_current(const ControlInputs &inputs) const {
   switch (this->mode_) {
     case CHARGING_MODE_DISABLED:
       return 0.0f;
@@ -22,14 +22,18 @@ float ChargeController::calculate_current(const ControlInputs &inputs) const {
 
   switch (this->mode_) {
     case CHARGING_MODE_MANUAL:
-      return this->apply_safety_limits_(this->manual_(inputs), inputs);
+      return this->manual_(inputs);
     case CHARGING_MODE_LOAD_BALANCING:
-      return this->apply_safety_limits_(this->load_balancing_(inputs), inputs);
+      return this->load_balancing_(inputs);
     case CHARGING_MODE_PV_SURPLUS:
-      return this->apply_safety_limits_(this->pv_surplus_(inputs), inputs);
+      return this->pv_surplus_(inputs);
     default:
       return 0.0f;
   }
+}
+
+float ChargeController::calculate_current(const ControlInputs &inputs) const {
+  return this->apply_safety_limits_(this->calculate_requested_current(inputs), inputs);
 }
 
 float ChargeController::manual_(const ControlInputs &inputs) const {

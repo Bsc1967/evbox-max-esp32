@@ -1529,6 +1529,23 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
   }
 
   const uint32_t now = millis();
+  const float requested_before_safety = std::max(0.0f, this->controller_.calculate_requested_current(this->inputs_));
+  if (requested_before_safety >= MIN_CHARGE_CURRENT_A && requested < MIN_CHARGE_CURRENT_A) {
+    this->pv_surplus_ready_since_ms_ = 0;
+    this->pv_surplus_low_since_ms_ = 0;
+    this->pv_pause_hold_logged_ = false;
+    this->pv_pause_active_ = true;
+    if (charge_flow_active && this->state_ != PAUSED) {
+      ESP_LOGW(TAG,
+               "Fuse/load-balancing limit reduced current below %.1f A (requested %.1f A, allowed %.1f A); suspending immediately without 6A hold",
+               MIN_CHARGE_CURRENT_A, requested_before_safety, requested);
+      this->transition_(PAUSED);
+    } else {
+      ESP_LOGD(TAG, "Fuse/load-balancing limit allows only %.1f A; not starting charge flow", requested);
+    }
+    return 0.0f;
+  }
+
   if (requested >= MIN_CHARGE_CURRENT_A) {
     this->pv_surplus_low_since_ms_ = 0;
     this->pv_pause_hold_logged_ = false;
