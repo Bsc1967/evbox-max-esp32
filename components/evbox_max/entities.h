@@ -20,6 +20,9 @@ enum EvboxNumberType : uint8_t {
 enum EvboxSelectType : uint8_t {
   EVBOX_SELECT_MODE = 0,
   EVBOX_SELECT_FAILSAFE_MODE = 1,
+  EVBOX_SELECT_EVBOX_L1_GRID_PHASE = 2,
+  EVBOX_SELECT_EVBOX_L2_GRID_PHASE = 3,
+  EVBOX_SELECT_EVBOX_L3_GRID_PHASE = 4,
 };
 
 enum EvboxSwitchType : uint8_t {

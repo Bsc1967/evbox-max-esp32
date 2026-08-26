@@ -51,6 +51,12 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   float get_manual_current() const { return this->inputs_.manual_current; }
   float get_failsafe_current() const { return this->controller_.failsafe_current(); }
   bool get_pv_enabled() const { return this->inputs_.pv_enabled; }
+  GridPhase get_evbox_l1_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l1_grid_phase); }
+  GridPhase get_evbox_l2_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l2_grid_phase); }
+  GridPhase get_evbox_l3_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l3_grid_phase); }
+  void set_evbox_l1_grid_phase(GridPhase phase);
+  void set_evbox_l2_grid_phase(GridPhase phase);
+  void set_evbox_l3_grid_phase(GridPhase phase);
   void set_commissioning_mode(bool enabled) { this->commissioning_mode_ = enabled; }
   void set_remote_start_card(const std::string &card) { this->remote_start_card_ = card; }
   void set_charge_phases(uint8_t phases) {
@@ -101,6 +107,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_pv_pause_timer_sensor(sensor::Sensor *sensor) { this->pv_pause_timer_sensor_ = sensor; }
   void set_pv_status_text_sensor(text_sensor::TextSensor *sensor) { this->pv_status_text_sensor_ = sensor; }
   void set_limit_reason_text_sensor(text_sensor::TextSensor *sensor) { this->limit_reason_text_sensor_ = sensor; }
+  void set_grid_phase_mapping_text_sensor(text_sensor::TextSensor *sensor) { this->grid_phase_mapping_text_sensor_ = sensor; }
   void set_l1_current_sensor(sensor::Sensor *sensor) { this->l1_current_sensor_ = sensor; }
   void set_l2_current_sensor(sensor::Sensor *sensor) { this->l2_current_sensor_ = sensor; }
   void set_l3_current_sensor(sensor::Sensor *sensor) { this->l3_current_sensor_ = sensor; }
@@ -143,6 +150,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
     float charger_breaker_current{16.0f};
     float main_fuse_current{25.0f};
     float failsafe_current{6.0f};
+    uint8_t evbox_l1_grid_phase{GRID_PHASE_L1};
+    uint8_t evbox_l2_grid_phase{GRID_PHASE_L2};
+    uint8_t evbox_l3_grid_phase{GRID_PHASE_L3};
   };
 
   void handle_frame_(const Frame &frame);
@@ -157,6 +167,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void update_phase_detection_();
   uint8_t count_phases_(uint8_t phase_mask) const;
   void update_ev_measurements_();
+  void set_evbox_grid_phase_(uint8_t evbox_phase, GridPhase grid_phase);
+  const char *grid_phase_name_(uint8_t phase) const;
+  std::string grid_phase_mapping_name_() const;
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
   void note_chargebox_seen_(uint8_t address);
@@ -324,6 +337,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *pv_pause_timer_sensor_{nullptr};
   text_sensor::TextSensor *pv_status_text_sensor_{nullptr};
   text_sensor::TextSensor *limit_reason_text_sensor_{nullptr};
+  text_sensor::TextSensor *grid_phase_mapping_text_sensor_{nullptr};
   sensor::Sensor *l1_current_sensor_{nullptr};
   sensor::Sensor *l2_current_sensor_{nullptr};
   sensor::Sensor *l3_current_sensor_{nullptr};

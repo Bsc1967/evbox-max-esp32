@@ -12,6 +12,9 @@ EvboxSelectType = evbox_max_ns.enum("EvboxSelectType")
 SELECT_TYPES = {
     "MODE": EvboxSelectType.EVBOX_SELECT_MODE,
     "FAILSAFE_MODE": EvboxSelectType.EVBOX_SELECT_FAILSAFE_MODE,
+    "EVBOX_L1_GRID_PHASE": EvboxSelectType.EVBOX_SELECT_EVBOX_L1_GRID_PHASE,
+    "EVBOX_L2_GRID_PHASE": EvboxSelectType.EVBOX_SELECT_EVBOX_L2_GRID_PHASE,
+    "EVBOX_L3_GRID_PHASE": EvboxSelectType.EVBOX_SELECT_EVBOX_L3_GRID_PHASE,
 }
 
 CONFIG_SCHEMA = select.select_schema(EvboxModeSelect).extend(
@@ -23,11 +26,12 @@ CONFIG_SCHEMA = select.select_schema(EvboxModeSelect).extend(
 
 
 async def to_code(config):
-    options = (
-        ["MANUAL", "LOAD_BALANCING", "PV_SURPLUS", "DISABLED"]
-        if config[CONF_TYPE] == EvboxSelectType.EVBOX_SELECT_MODE
-        else ["STOP", "LIMIT_6A"]
-    )
+    if config[CONF_TYPE] == EvboxSelectType.EVBOX_SELECT_MODE:
+        options = ["MANUAL", "LOAD_BALANCING", "PV_SURPLUS", "DISABLED"]
+    elif config[CONF_TYPE] == EvboxSelectType.EVBOX_SELECT_FAILSAFE_MODE:
+        options = ["STOP", "LIMIT_6A"]
+    else:
+        options = ["L1", "L2", "L3"]
     var = await select.new_select(config, options=options)
     await cg.register_component(var, config)
     parent = await cg.get_variable(config[CONF_EVBOX_MAX_ID])

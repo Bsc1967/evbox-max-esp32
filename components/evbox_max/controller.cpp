@@ -78,16 +78,27 @@ float ChargeController::apply_safety_limits_(float requested_current, const Cont
                                                              : std::fabs(measured_phase_current);
     return std::max(ev_phase_current, 0.0f) + (main_limit - signed_current);
   };
+  const auto mapped_phase_allowance = [&inputs, &phase_allowance](uint8_t grid_phase, float ev_phase_current) {
+    switch (grid_phase) {
+      case GRID_PHASE_L2:
+        return phase_allowance(inputs.l2_current, inputs.l2_power_w, ev_phase_current);
+      case GRID_PHASE_L3:
+        return phase_allowance(inputs.l3_current, inputs.l3_power_w, ev_phase_current);
+      case GRID_PHASE_L1:
+      default:
+        return phase_allowance(inputs.l1_current, inputs.l1_power_w, ev_phase_current);
+    }
+  };
 
   const uint8_t phase_mask = inputs.active_phase_mask != 0 ? inputs.active_phase_mask : 0x01;
   if ((phase_mask & 0x01) != 0) {
-    allowed = std::min(allowed, phase_allowance(inputs.l1_current, inputs.l1_power_w, inputs.ev_l1_current));
+    allowed = std::min(allowed, mapped_phase_allowance(inputs.evbox_l1_grid_phase, inputs.ev_l1_current));
   }
   if ((phase_mask & 0x02) != 0) {
-    allowed = std::min(allowed, phase_allowance(inputs.l2_current, inputs.l2_power_w, inputs.ev_l2_current));
+    allowed = std::min(allowed, mapped_phase_allowance(inputs.evbox_l2_grid_phase, inputs.ev_l2_current));
   }
   if ((phase_mask & 0x04) != 0) {
-    allowed = std::min(allowed, phase_allowance(inputs.l3_current, inputs.l3_power_w, inputs.ev_l3_current));
+    allowed = std::min(allowed, mapped_phase_allowance(inputs.evbox_l3_grid_phase, inputs.ev_l3_current));
   }
 
   return clamp(allowed, 0.0f, inputs.max_current);

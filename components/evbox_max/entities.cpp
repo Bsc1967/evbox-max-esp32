@@ -3,6 +3,23 @@
 namespace esphome {
 namespace evbox_max {
 
+namespace {
+const char *grid_phase_option(GridPhase phase) {
+  switch (phase) {
+    case GRID_PHASE_L2: return "L2";
+    case GRID_PHASE_L3: return "L3";
+    case GRID_PHASE_L1:
+    default: return "L1";
+  }
+}
+
+GridPhase parse_grid_phase_option(const std::string &value) {
+  if (value == "L2") return GRID_PHASE_L2;
+  if (value == "L3") return GRID_PHASE_L3;
+  return GRID_PHASE_L1;
+}
+}  // namespace
+
 void EvboxCurrentNumber::setup() {
   if (this->parent_ == nullptr) return;
 
@@ -68,8 +85,14 @@ void EvboxModeSelect::setup() {
         this->publish_state("DISABLED");
         break;
     }
-  } else {
+  } else if (this->type_ == EVBOX_SELECT_FAILSAFE_MODE) {
     this->publish_state(this->parent_->get_failsafe_mode() == FAILSAFE_MODE_STOP ? "STOP" : "LIMIT_6A");
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L1_GRID_PHASE) {
+    this->publish_state(grid_phase_option(this->parent_->get_evbox_l1_grid_phase()));
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L2_GRID_PHASE) {
+    this->publish_state(grid_phase_option(this->parent_->get_evbox_l2_grid_phase()));
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L3_GRID_PHASE) {
+    this->publish_state(grid_phase_option(this->parent_->get_evbox_l3_grid_phase()));
   }
 }
 
@@ -83,9 +106,15 @@ void EvboxModeSelect::control(const std::string &value) {
     if (value == "LOAD_BALANCING") this->parent_->set_mode(CHARGING_MODE_LOAD_BALANCING);
     if (value == "PV_SURPLUS") this->parent_->set_mode(CHARGING_MODE_PV_SURPLUS);
     if (value == "DISABLED") this->parent_->set_mode(CHARGING_MODE_DISABLED);
-  } else {
+  } else if (this->type_ == EVBOX_SELECT_FAILSAFE_MODE) {
     if (value == "STOP") this->parent_->set_failsafe_mode(FAILSAFE_MODE_STOP);
     if (value == "LIMIT_6A") this->parent_->set_failsafe_mode(FAILSAFE_MODE_LIMIT_6A);
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L1_GRID_PHASE) {
+    this->parent_->set_evbox_l1_grid_phase(parse_grid_phase_option(value));
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L2_GRID_PHASE) {
+    this->parent_->set_evbox_l2_grid_phase(parse_grid_phase_option(value));
+  } else if (this->type_ == EVBOX_SELECT_EVBOX_L3_GRID_PHASE) {
+    this->parent_->set_evbox_l3_grid_phase(parse_grid_phase_option(value));
   }
   this->publish_state(value);
 }

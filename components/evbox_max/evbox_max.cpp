@@ -12,7 +12,7 @@ static constexpr uint8_t ADDR_CP = 0x80;
 static constexpr uint8_t ADDR_BROADCAST = 0xBC;
 static constexpr uint16_t ACK = 0xAA00;
 static constexpr uint32_t SETTINGS_MAGIC = 0x45564258UL;
-static constexpr uint16_t SETTINGS_VERSION = 1;
+static constexpr uint16_t SETTINGS_VERSION = 2;
 static constexpr float MIN_CHARGE_CURRENT_A = 6.0f;
 static constexpr uint32_t PV_SURPLUS_START_DELAY_MS = 60000UL;
 static constexpr uint32_t PV_SURPLUS_PAUSE_DELAY_MS = 300000UL;
@@ -198,6 +198,7 @@ void EvboxMaxComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  ChargeBox hardware generation: %u", this->chargebox_hardware_generation_);
   ESP_LOGCONFIG(TAG, "  Protocol profile: %s", this->protocol_profile_name_());
   ESP_LOGCONFIG(TAG, "  Commissioning mode: %s", this->commissioning_mode_ ? "YES" : "NO");
+  ESP_LOGCONFIG(TAG, "  Grid phase mapping: %s", this->grid_phase_mapping_name_().c_str());
   ESP_LOGCONFIG(TAG, "  RS485 driver enable pin: %s", this->rs485_de_pin_ != nullptr ? "configured" : "not configured");
 }
 
@@ -260,6 +261,38 @@ void EvboxMaxComponent::set_pv_enabled(bool enabled) {
   this->inputs_.pv_enabled = enabled;
   this->save_settings_();
   this->apply_current_limit_now_(enabled ? "PV mode enabled" : "PV mode disabled");
+}
+
+void EvboxMaxComponent::set_evbox_l1_grid_phase(GridPhase phase) {
+  this->set_evbox_grid_phase_(1, phase);
+}
+
+void EvboxMaxComponent::set_evbox_l2_grid_phase(GridPhase phase) {
+  this->set_evbox_grid_phase_(2, phase);
+}
+
+void EvboxMaxComponent::set_evbox_l3_grid_phase(GridPhase phase) {
+  this->set_evbox_grid_phase_(3, phase);
+}
+
+void EvboxMaxComponent::set_evbox_grid_phase_(uint8_t evbox_phase, GridPhase grid_phase) {
+  const uint8_t phase = grid_phase > GRID_PHASE_L3 ? GRID_PHASE_L1 : static_cast<uint8_t>(grid_phase);
+  switch (evbox_phase) {
+    case 1:
+      this->inputs_.evbox_l1_grid_phase = phase;
+      break;
+    case 2:
+      this->inputs_.evbox_l2_grid_phase = phase;
+      break;
+    case 3:
+      this->inputs_.evbox_l3_grid_phase = phase;
+      break;
+    default:
+      return;
+  }
+  ESP_LOGI(TAG, "Grid phase mapping changed: %s", this->grid_phase_mapping_name_().c_str());
+  this->save_settings_();
+  this->apply_current_limit_now_("grid phase mapping changed");
 }
 
 void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
@@ -1042,6 +1075,9 @@ EvboxMaxComponent::StoredSettings EvboxMaxComponent::current_settings_() const {
   settings.charger_breaker_current = this->inputs_.charger_breaker_current;
   settings.main_fuse_current = this->inputs_.main_fuse_current;
   settings.failsafe_current = this->controller_.failsafe_current();
+  settings.evbox_l1_grid_phase = this->inputs_.evbox_l1_grid_phase;
+  settings.evbox_l2_grid_phase = this->inputs_.evbox_l2_grid_phase;
+  settings.evbox_l3_grid_phase = this->inputs_.evbox_l3_grid_phase;
   return settings;
 }
 
@@ -1058,6 +1094,9 @@ void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
   if (restored_manual > 0.0f && restored_manual < MIN_CHARGE_CURRENT_A) restored_manual = MIN_CHARGE_CURRENT_A;
   this->inputs_.manual_current = std::min(restored_manual, std::min(this->inputs_.max_current, this->inputs_.charger_breaker_current));
   this->inputs_.main_fuse_current = settings.main_fuse_current;
+  this->inputs_.evbox_l1_grid_phase = settings.evbox_l1_grid_phase <= GRID_PHASE_L3 ? settings.evbox_l1_grid_phase : GRID_PHASE_L1;
+  this->inputs_.evbox_l2_grid_phase = settings.evbox_l2_grid_phase <= GRID_PHASE_L3 ? settings.evbox_l2_grid_phase : GRID_PHASE_L2;
+  this->inputs_.evbox_l3_grid_phase = settings.evbox_l3_grid_phase <= GRID_PHASE_L3 ? settings.evbox_l3_grid_phase : GRID_PHASE_L3;
 }
 
 void EvboxMaxComponent::update_meter_from_state_(const std::string &data) {
@@ -1863,6 +1902,21 @@ const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
   }
 }
 
+const char *EvboxMaxComponent::grid_phase_name_(uint8_t phase) const {
+  switch (phase) {
+    case GRID_PHASE_L2: return "Janitza L2";
+    case GRID_PHASE_L3: return "Janitza L3";
+    case GRID_PHASE_L1:
+    default: return "Janitza L1";
+  }
+}
+
+std::string EvboxMaxComponent::grid_phase_mapping_name_() const {
+  return std::string("EVBox L1->") + this->grid_phase_name_(this->inputs_.evbox_l1_grid_phase) +
+         ", EVBox L2->" + this->grid_phase_name_(this->inputs_.evbox_l2_grid_phase) +
+         ", EVBox L3->" + this->grid_phase_name_(this->inputs_.evbox_l3_grid_phase);
+}
+
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
   if (this->chargebox_address_ == 0) return;
   if (amps > 0.0f && amps < MIN_CHARGE_CURRENT_A) {
@@ -2022,6 +2076,9 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->limit_reason_text_sensor_ != nullptr) {
     this->limit_reason_text_sensor_->publish_state(this->limit_reason_);
+  }
+  if (this->grid_phase_mapping_text_sensor_ != nullptr) {
+    this->grid_phase_mapping_text_sensor_->publish_state(this->grid_phase_mapping_name_());
   }
   if (this->l1_current_sensor_ != nullptr) {
     this->l1_current_sensor_->publish_state(this->ev_l1_current_a_);

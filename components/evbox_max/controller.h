@@ -17,6 +17,12 @@ enum FailsafeMode : uint8_t {
   FAILSAFE_MODE_LIMIT_6A = 1,
 };
 
+enum GridPhase : uint8_t {
+  GRID_PHASE_L1 = 0,
+  GRID_PHASE_L2 = 1,
+  GRID_PHASE_L3 = 2,
+};
+
 struct ControlInputs {
   float manual_current{6.0f};
   float max_current{16.0f};
@@ -37,6 +43,9 @@ struct ControlInputs {
   float grid_export_w{0.0f};
   uint8_t charge_phases{1};
   uint8_t active_phase_mask{0x01};
+  uint8_t evbox_l1_grid_phase{GRID_PHASE_L1};
+  uint8_t evbox_l2_grid_phase{GRID_PHASE_L2};
+  uint8_t evbox_l3_grid_phase{GRID_PHASE_L3};
   bool janitza_online{false};
   bool pv_enabled{false};
 };

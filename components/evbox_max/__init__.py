@@ -74,6 +74,10 @@ CONF_RELAY_JANITZA_OK_PIN = "relay_janitza_ok_pin"
 CONF_RELAY_CHARGING_ACTIVE_PIN = "relay_charging_active_pin"
 CONF_RELAY_FAILSAFE_PIN = "relay_failsafe_pin"
 CONF_REMOTE_START_CARD = "remote_start_card"
+CONF_GRID_PHASE_L1 = "grid_phase_l1"
+CONF_GRID_PHASE_L2 = "grid_phase_l2"
+CONF_GRID_PHASE_L3 = "grid_phase_l3"
+CONF_GRID_PHASE_MAPPING = "grid_phase_mapping"
 
 
 def validate_remote_start_card(value):
@@ -106,6 +110,13 @@ FAILSAFE_MODES = {
     "LIMIT_6A": FailsafeMode.FAILSAFE_MODE_LIMIT_6A,
 }
 
+GridPhase = evbox_max_ns.enum("GridPhase")
+GRID_PHASES = {
+    "L1": GridPhase.GRID_PHASE_L1,
+    "L2": GridPhase.GRID_PHASE_L2,
+    "L3": GridPhase.GRID_PHASE_L3,
+}
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(EvboxMaxComponent),
@@ -115,6 +126,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAIN_FUSE_CURRENT, default=25): cv.float_range(min=0, max=80),
         cv.Optional(CONF_MANUAL_CURRENT, default=6): cv.float_range(min=0, max=32),
         cv.Optional(CONF_CHARGE_PHASES, default=1): cv.one_of(1, 2, 3, int=True),
+        cv.Optional(CONF_GRID_PHASE_L1, default="L1"): cv.enum(GRID_PHASES, upper=True),
+        cv.Optional(CONF_GRID_PHASE_L2, default="L2"): cv.enum(GRID_PHASES, upper=True),
+        cv.Optional(CONF_GRID_PHASE_L3, default="L3"): cv.enum(GRID_PHASES, upper=True),
         cv.Optional(CONF_FAILSAFE_CURRENT, default=6): cv.float_range(min=0, max=16),
         cv.Optional(CONF_FAILSAFE_MODE, default="LIMIT_6A"): cv.enum(
             FAILSAFE_MODES, upper=True
@@ -232,6 +246,7 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_PV_STATUS): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_LIMIT_REASON): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_GRID_PHASE_MAPPING): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_L1_CURRENT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
@@ -327,6 +342,9 @@ async def to_code(config):
     cg.add(var.set_main_fuse_current(config[CONF_MAIN_FUSE_CURRENT]))
     cg.add(var.set_manual_current(config[CONF_MANUAL_CURRENT]))
     cg.add(var.set_charge_phases(config[CONF_CHARGE_PHASES]))
+    cg.add(var.set_evbox_l1_grid_phase(config[CONF_GRID_PHASE_L1]))
+    cg.add(var.set_evbox_l2_grid_phase(config[CONF_GRID_PHASE_L2]))
+    cg.add(var.set_evbox_l3_grid_phase(config[CONF_GRID_PHASE_L3]))
     cg.add(var.set_failsafe_current(config[CONF_FAILSAFE_CURRENT]))
     cg.add(var.set_failsafe_mode(config[CONF_FAILSAFE_MODE]))
     cg.add(var.set_heartbeat_interval(config[CONF_HEARTBEAT_INTERVAL]))
@@ -443,6 +461,9 @@ async def to_code(config):
     if CONF_LIMIT_REASON in config:
         sens = await text_sensor.new_text_sensor(config[CONF_LIMIT_REASON])
         cg.add(var.set_limit_reason_text_sensor(sens))
+    if CONF_GRID_PHASE_MAPPING in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_GRID_PHASE_MAPPING])
+        cg.add(var.set_grid_phase_mapping_text_sensor(sens))
     if CONF_L1_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_L1_CURRENT])
         cg.add(var.set_l1_current_sensor(sens))
