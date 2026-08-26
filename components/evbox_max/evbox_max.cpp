@@ -643,6 +643,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         this->note_chargebox_seen_(frame.src);
         this->evbox_online_ = true;
         ESP_LOGD(TAG, "CB acknowledged current setpoint");
+        if (this->commanded_current_ <= 0.0f) {
+          this->returned_current_limit_ = 0.0f;
+          this->current_limit_returned_ = true;
+          this->update_ev_measurements_();
+          ESP_LOGI(TAG, "CB acknowledged zero current setpoint; treating returned current limit as 0.0 A until cmd26 reports otherwise");
+        }
         // A cmd6B ACK only confirms that the current setpoint was accepted on
         // the MAX bus. The CB session starts only when cmd23 or CHARGING state
         // follows, so keep the controller in STARTING until the CB proves it.
@@ -748,6 +754,24 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->remote_start_pending_ = false;
           this->start_requested_ms_ = 0;
           this->transition_(CHARGING);
+        } else if (code == 0x49) {
+          this->stop_requested_ = false;
+          this->session_active_ = true;
+          this->start_requested_ = false;
+          this->current_start_released_ = true;
+          this->delayed_current_release_pending_ = false;
+          this->finished_reset_pending_ = false;
+          this->delayed_start_trigger_pending_ = false;
+          this->remote_start_pending_ = false;
+          this->returned_current_limit_ = 0.0f;
+          this->current_limit_returned_ = true;
+          if (this->controller_.mode() == CHARGING_MODE_PV_SURPLUS) {
+            this->pv_pause_active_ = true;
+            this->pv_status_ = "PV_PAUSED";
+            this->limit_reason_ = "PV_BELOW_6A_PAUSED";
+          }
+          ESP_LOGI(TAG, "CB reports 0x49 with locked cable and no charging current; treating as paused/suspended session");
+          this->transition_(PAUSED);
         } else if (code == 0x4B) {
           this->stop_requested_ = false;
           this->session_active_ = false;
@@ -1801,6 +1825,7 @@ const char *EvboxMaxComponent::cb_status_name_(uint8_t code) const {
     case 0x17: return "IN_USE_OR_PLUGGED";
     case 0x47: return "PREPARING";
     case 0x48: return "CHARGING";
+    case 0x49: return "PAUSED";
     case 0x4A: return "READY";
     case 0x4B: return "FINISHED_PLUGGED_IN";
     default: return "UNKNOWN";
@@ -1876,6 +1901,8 @@ void EvboxMaxComponent::publish_() {
   if (this->status_text_sensor_ != nullptr) {
     if (this->state_ == FAULT) {
       this->status_text_sensor_->publish_state("Fault");
+    } else if (this->state_ == PAUSED) {
+      this->status_text_sensor_->publish_state("Paused");
     } else if (this->session_active_) {
       this->status_text_sensor_->publish_state("Session active");
     } else if (this->start_requested_) {
