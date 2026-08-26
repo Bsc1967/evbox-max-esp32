@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@e9521818f83485f6ffc66b3a663908731fb59dda
+  - source: github://Bsc1967/evbox-max-esp32@1b0d1c8248c0feaade145c0693eb3ae9564b15e0
     refresh: 0s
     components:
       - evbox_max
@@ -61,6 +61,9 @@ evbox_max:
   uart_id: evbox_rs485_uart
   mode: MANUAL
   charge_phases: 1
+  grid_phase_l1: L3
+  grid_phase_l2: L1
+  grid_phase_l3: L2
   manual_current: 6
   max_current: 16
   failsafe_mode: LIMIT_6A
@@ -93,6 +96,8 @@ evbox_max:
     name: EVBox PV Status
   limit_reason:
     name: EVBox Limit Reason
+  grid_phase_mapping:
+    name: EVBox Grid Phase Mapping
   cb_firmware:
     name: EVBox CB Firmware
   cb_hardware_generation:
@@ -261,6 +266,21 @@ select:
     evbox_max_id: evbox
     type: FAILSAFE_MODE
     name: Failsafe Mode
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: EVBOX_L1_GRID_PHASE
+    name: EVBox L1 Grid Phase
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: EVBOX_L2_GRID_PHASE
+    name: EVBox L2 Grid Phase
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: EVBOX_L3_GRID_PHASE
+    name: EVBox L3 Grid Phase
 
 switch:
   - platform: evbox_max
