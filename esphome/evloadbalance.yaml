@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@efad7c1b12bd799539789b3f04c54cb865c24993
+  - source: github://Bsc1967/evbox-max-esp32@834baa03dc370fa9876a5ddbde585063fea339f2
     refresh: 0s
     components:
       - evbox_max
@@ -89,6 +89,10 @@ evbox_max:
     name: EVBox CB Status Detail
   current_request_state:
     name: EVBox Current Request State
+  pv_status:
+    name: EVBox PV Status
+  limit_reason:
+    name: EVBox Limit Reason
   cb_firmware:
     name: EVBox CB Firmware
   cb_hardware_generation:
@@ -111,12 +115,22 @@ evbox_max:
   # Current limits: requested, sent and returned by the ChargeBox
   current_limit:
     name: EVBox Current Limit
+  requested_current:
+    name: EVBox Requested Current
+  allowed_current:
+    name: EVBox Allowed Current
   desired_current:
     name: EVBox Desired Current
   commanded_current:
     name: EVBox Commanded Current
   returned_current_limit:
     name: EVBox Returned Current Limit
+  pv_available_current:
+    name: EVBox PV Available Current
+  pv_start_timer:
+    name: EVBox PV Start Timer
+  pv_pause_timer:
+    name: EVBox PV Pause Timer
 
   # EVBox kWh meter diagnostics and values
   meter_status:
