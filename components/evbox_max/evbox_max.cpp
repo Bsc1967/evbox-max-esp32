@@ -203,23 +203,43 @@ void EvboxMaxComponent::set_failsafe_mode(FailsafeMode mode) {
 }
 
 void EvboxMaxComponent::set_max_current(float current) {
-  this->inputs_.max_current = current;
+  const float group_limit = std::max(0.0f, this->inputs_.charger_breaker_current);
+  float bounded = std::max(0.0f, current);
+  if (bounded > 0.0f && bounded < MIN_CHARGE_CURRENT_A) bounded = MIN_CHARGE_CURRENT_A;
+  this->inputs_.max_current = std::min(bounded, group_limit);
+  if (this->inputs_.manual_current > this->inputs_.max_current) {
+    this->inputs_.manual_current = this->inputs_.max_current;
+  }
   this->save_settings_();
+  this->apply_current_limit_now_("max current changed");
 }
 
 void EvboxMaxComponent::set_charger_breaker_current(float current) {
-  this->inputs_.charger_breaker_current = current;
+  this->inputs_.charger_breaker_current = std::max(0.0f, std::min(32.0f, current));
+  if (this->inputs_.max_current > this->inputs_.charger_breaker_current) {
+    this->inputs_.max_current = this->inputs_.charger_breaker_current;
+  }
+  if (this->inputs_.manual_current > this->inputs_.charger_breaker_current) {
+    this->inputs_.manual_current = this->inputs_.charger_breaker_current;
+  }
   this->save_settings_();
+  this->apply_current_limit_now_("group breaker current changed");
 }
 
 void EvboxMaxComponent::set_main_fuse_current(float current) {
   this->inputs_.main_fuse_current = current;
   this->save_settings_();
+  this->apply_current_limit_now_("main fuse current changed");
 }
 
 void EvboxMaxComponent::set_manual_current(float current) {
-  this->inputs_.manual_current = current;
+  const float group_limit = std::max(0.0f, this->inputs_.charger_breaker_current);
+  const float upper_limit = std::min(this->inputs_.max_current, group_limit);
+  float bounded = std::max(0.0f, current);
+  if (bounded > 0.0f && bounded < MIN_CHARGE_CURRENT_A) bounded = MIN_CHARGE_CURRENT_A;
+  this->inputs_.manual_current = std::min(bounded, upper_limit);
   this->save_settings_();
+  this->apply_current_limit_now_("manual current changed");
 }
 
 void EvboxMaxComponent::set_failsafe_current(float current) {
@@ -984,9 +1004,13 @@ void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
   this->controller_.set_failsafe_mode(static_cast<FailsafeMode>(settings.failsafe_mode));
   this->controller_.set_failsafe_current(settings.failsafe_current);
   this->inputs_.pv_enabled = settings.pv_enabled;
-  this->inputs_.manual_current = settings.manual_current;
-  this->inputs_.max_current = settings.max_current;
-  this->inputs_.charger_breaker_current = settings.charger_breaker_current;
+  this->inputs_.charger_breaker_current = std::max(0.0f, std::min(32.0f, settings.charger_breaker_current));
+  float restored_max = std::max(0.0f, settings.max_current);
+  if (restored_max > 0.0f && restored_max < MIN_CHARGE_CURRENT_A) restored_max = MIN_CHARGE_CURRENT_A;
+  this->inputs_.max_current = std::min(restored_max, this->inputs_.charger_breaker_current);
+  float restored_manual = std::max(0.0f, settings.manual_current);
+  if (restored_manual > 0.0f && restored_manual < MIN_CHARGE_CURRENT_A) restored_manual = MIN_CHARGE_CURRENT_A;
+  this->inputs_.manual_current = std::min(restored_manual, std::min(this->inputs_.max_current, this->inputs_.charger_breaker_current));
   this->inputs_.main_fuse_current = settings.main_fuse_current;
 }
 
@@ -1511,6 +1535,26 @@ void EvboxMaxComponent::send_periodic_cmd18_() {
   if (this->chargebox_address_ == 0) return;
   ESP_LOGD(TAG, "Sending periodic cmd18 status poll; function still marked TE_TESTEN");
   this->send_status_update_request_();
+}
+
+void EvboxMaxComponent::apply_current_limit_now_(const char *reason) {
+  this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+  const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
+                                  this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
+                                  this->state_ == PAUSED;
+  const float commanded_current = this->apply_minimum_current_policy_(this->desired_current_, charge_flow_active);
+
+  ESP_LOGI(TAG, "Current limits recalculated after %s: desired=%.1f A commanded=%.1f A active=%.1f A group=%.1f A main=%.1f A",
+           reason, this->desired_current_, commanded_current, this->active_current_,
+           this->inputs_.charger_breaker_current, this->inputs_.main_fuse_current);
+
+  if (this->stop_requested_ || !charge_flow_active || !this->current_setpoint_allowed_()) return;
+
+  float delta = commanded_current - this->active_current_;
+  if (delta < 0.0f) delta = -delta;
+  if ((this->active_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
+    this->send_current_setpoint_(commanded_current);
+  }
 }
 
 float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, bool charge_flow_active) {
