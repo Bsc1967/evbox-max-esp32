@@ -23,9 +23,16 @@ CONF_STATUS = "status"
 CONF_STATE = "state"
 CONF_EV_CURRENT = "ev_current"
 CONF_CURRENT_LIMIT = "current_limit"
+CONF_REQUESTED_CURRENT = "requested_current"
+CONF_ALLOWED_CURRENT = "allowed_current"
 CONF_DESIRED_CURRENT = "desired_current"
 CONF_COMMANDED_CURRENT = "commanded_current"
 CONF_RETURNED_CURRENT_LIMIT = "returned_current_limit"
+CONF_PV_AVAILABLE_CURRENT = "pv_available_current"
+CONF_PV_START_TIMER = "pv_start_timer"
+CONF_PV_PAUSE_TIMER = "pv_pause_timer"
+CONF_PV_STATUS = "pv_status"
+CONF_LIMIT_REASON = "limit_reason"
 CONF_L1_CURRENT = "l1_current"
 CONF_L2_CURRENT = "l2_current"
 CONF_L3_CURRENT = "l3_current"
@@ -177,6 +184,18 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="current",
             state_class="measurement",
         ),
+        cv.Optional(CONF_REQUESTED_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_ALLOWED_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
         cv.Optional(CONF_DESIRED_CURRENT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
@@ -195,6 +214,24 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="current",
             state_class="measurement",
         ),
+        cv.Optional(CONF_PV_AVAILABLE_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_PV_START_TIMER): sensor.sensor_schema(
+            unit_of_measurement="s",
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_PV_PAUSE_TIMER): sensor.sensor_schema(
+            unit_of_measurement="s",
+            accuracy_decimals=0,
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_PV_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_LIMIT_REASON): text_sensor.text_sensor_schema(),
         cv.Optional(CONF_L1_CURRENT): sensor.sensor_schema(
             unit_of_measurement="A",
             accuracy_decimals=1,
@@ -376,6 +413,12 @@ async def to_code(config):
     if CONF_CURRENT_LIMIT in config:
         sens = await sensor.new_sensor(config[CONF_CURRENT_LIMIT])
         cg.add(var.set_current_limit_sensor(sens))
+    if CONF_REQUESTED_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_REQUESTED_CURRENT])
+        cg.add(var.set_requested_current_sensor(sens))
+    if CONF_ALLOWED_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_ALLOWED_CURRENT])
+        cg.add(var.set_allowed_current_sensor(sens))
     if CONF_DESIRED_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_DESIRED_CURRENT])
         cg.add(var.set_desired_current_sensor(sens))
@@ -385,6 +428,21 @@ async def to_code(config):
     if CONF_RETURNED_CURRENT_LIMIT in config:
         sens = await sensor.new_sensor(config[CONF_RETURNED_CURRENT_LIMIT])
         cg.add(var.set_returned_current_limit_sensor(sens))
+    if CONF_PV_AVAILABLE_CURRENT in config:
+        sens = await sensor.new_sensor(config[CONF_PV_AVAILABLE_CURRENT])
+        cg.add(var.set_pv_available_current_sensor(sens))
+    if CONF_PV_START_TIMER in config:
+        sens = await sensor.new_sensor(config[CONF_PV_START_TIMER])
+        cg.add(var.set_pv_start_timer_sensor(sens))
+    if CONF_PV_PAUSE_TIMER in config:
+        sens = await sensor.new_sensor(config[CONF_PV_PAUSE_TIMER])
+        cg.add(var.set_pv_pause_timer_sensor(sens))
+    if CONF_PV_STATUS in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_PV_STATUS])
+        cg.add(var.set_pv_status_text_sensor(sens))
+    if CONF_LIMIT_REASON in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_LIMIT_REASON])
+        cg.add(var.set_limit_reason_text_sensor(sens))
     if CONF_L1_CURRENT in config:
         sens = await sensor.new_sensor(config[CONF_L1_CURRENT])
         cg.add(var.set_l1_current_sensor(sens))

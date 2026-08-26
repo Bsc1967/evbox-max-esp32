@@ -33,9 +33,16 @@ void EvboxMaxComponent::setup() {
   this->remote_start_timeout_logged_ = false;
   this->delayed_start_trigger_pending_ = false;
   this->active_current_ = 0.0f;
+  this->requested_current_ = 0.0f;
+  this->allowed_current_ = 0.0f;
   this->desired_current_ = 0.0f;
   this->commanded_current_ = 0.0f;
   this->pv_pause_active_ = false;
+  this->pv_available_current_ = 0.0f;
+  this->pv_start_timer_remaining_s_ = 0.0f;
+  this->pv_pause_timer_remaining_s_ = 0.0f;
+  this->pv_status_ = "IDLE";
+  this->limit_reason_ = "UNKNOWN";
   this->pv_surplus_ready_since_ms_ = 0;
   this->pv_surplus_low_since_ms_ = 0;
   this->pv_pause_hold_logged_ = false;
@@ -121,7 +128,9 @@ void EvboxMaxComponent::loop() {
       this->schedule_startup_step_(1, 100);
     }
     if (!this->stop_requested_ && this->charge_flow_requested_() && this->current_setpoint_allowed_()) {
-      this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+      this->requested_current_ = this->controller_.calculate_requested_current(this->inputs_);
+      this->allowed_current_ = this->controller_.calculate_current(this->inputs_);
+      this->desired_current_ = this->allowed_current_;
       const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
                                       this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
                                       this->state_ == PAUSED;
@@ -250,6 +259,7 @@ void EvboxMaxComponent::set_failsafe_current(float current) {
 void EvboxMaxComponent::set_pv_enabled(bool enabled) {
   this->inputs_.pv_enabled = enabled;
   this->save_settings_();
+  this->apply_current_limit_now_(enabled ? "PV mode enabled" : "PV mode disabled");
 }
 
 void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_current, float l2_current,
@@ -273,7 +283,9 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   (void) l3_voltage;
   this->update_ev_measurements_();
 
-  const float next_current = this->controller_.calculate_current(this->inputs_);
+  this->requested_current_ = this->controller_.calculate_requested_current(this->inputs_);
+  this->allowed_current_ = this->controller_.calculate_current(this->inputs_);
+  const float next_current = this->allowed_current_;
   this->desired_current_ = next_current;
   const bool charge_flow_active = this->session_active_ || this->state_ == STARTING || this->state_ == SESSION_STARTING ||
                                   this->state_ == CHARGING || this->state_ == PAUSED;
@@ -1517,7 +1529,9 @@ void EvboxMaxComponent::run_delayed_current_release_() {
     return;
   }
 
-  this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+  this->requested_current_ = this->controller_.calculate_requested_current(this->inputs_);
+  this->allowed_current_ = this->controller_.calculate_current(this->inputs_);
+  this->desired_current_ = this->allowed_current_;
   if (!this->pv_start_release_allowed_(this->desired_current_)) {
     this->delayed_current_release_pending_ = true;
     this->delayed_current_release_due_ms_ = now + 1000UL;
@@ -1538,7 +1552,9 @@ void EvboxMaxComponent::send_periodic_cmd18_() {
 }
 
 void EvboxMaxComponent::apply_current_limit_now_(const char *reason) {
-  this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+  this->requested_current_ = this->controller_.calculate_requested_current(this->inputs_);
+  this->allowed_current_ = this->controller_.calculate_current(this->inputs_);
+  this->desired_current_ = this->allowed_current_;
   const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
                                   this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
                                   this->state_ == PAUSED;
@@ -1561,6 +1577,11 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
   const float requested = std::max(0.0f, requested_current);
   if (this->controller_.mode() != CHARGING_MODE_PV_SURPLUS) {
     this->pv_pause_active_ = false;
+    this->pv_available_current_ = 0.0f;
+    this->pv_start_timer_remaining_s_ = 0.0f;
+    this->pv_pause_timer_remaining_s_ = 0.0f;
+    this->pv_status_ = "NOT_PV_MODE";
+    this->limit_reason_ = requested < MIN_CHARGE_CURRENT_A && requested > 0.0f ? "BELOW_6A_MINIMUM" : "MODE_LIMIT";
     this->pv_surplus_ready_since_ms_ = 0;
     this->pv_surplus_low_since_ms_ = 0;
     this->pv_pause_hold_logged_ = false;
@@ -1574,11 +1595,16 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
 
   const uint32_t now = millis();
   const float requested_before_safety = std::max(0.0f, this->controller_.calculate_requested_current(this->inputs_));
+  this->pv_available_current_ = requested_before_safety;
+  this->pv_start_timer_remaining_s_ = 0.0f;
+  this->pv_pause_timer_remaining_s_ = 0.0f;
   if (requested_before_safety >= MIN_CHARGE_CURRENT_A && requested < MIN_CHARGE_CURRENT_A) {
     this->pv_surplus_ready_since_ms_ = 0;
     this->pv_surplus_low_since_ms_ = 0;
     this->pv_pause_hold_logged_ = false;
     this->pv_pause_active_ = true;
+    this->pv_status_ = charge_flow_active ? "PAUSED_BY_FUSE_LIMIT" : "BLOCKED_BY_FUSE_LIMIT";
+    this->limit_reason_ = "FUSE_LIMIT";
     if (charge_flow_active && this->state_ != PAUSED) {
       ESP_LOGW(TAG,
                "Fuse/load-balancing limit reduced current below %.1f A (requested %.1f A, allowed %.1f A); suspending immediately without 6A hold",
@@ -1593,13 +1619,19 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
   if (requested >= MIN_CHARGE_CURRENT_A) {
     this->pv_surplus_low_since_ms_ = 0;
     this->pv_pause_hold_logged_ = false;
+    this->limit_reason_ = "PV_SURPLUS";
     if (this->pv_surplus_ready_since_ms_ == 0) {
       this->pv_surplus_ready_since_ms_ = now;
+      this->pv_start_timer_remaining_s_ = static_cast<float>(PV_SURPLUS_START_DELAY_MS) / 1000.0f;
+      this->pv_status_ = this->pv_pause_active_ ? "PV_WAIT_RESUME" : "PV_READY";
       ESP_LOGI(TAG, "PV surplus %.1f A is above %.1f A; starting/hysteresis timer",
                requested, MIN_CHARGE_CURRENT_A);
     }
     if (this->pv_pause_active_) {
       if (now - this->pv_surplus_ready_since_ms_ < PV_SURPLUS_START_DELAY_MS) {
+        this->pv_start_timer_remaining_s_ =
+            static_cast<float>(PV_SURPLUS_START_DELAY_MS - (now - this->pv_surplus_ready_since_ms_)) / 1000.0f;
+        this->pv_status_ = "PV_WAIT_RESUME";
         ESP_LOGI(TAG, "PV surplus recovered to %.1f A; waiting before resume (%lus/%lus)",
                  requested, static_cast<unsigned long>((now - this->pv_surplus_ready_since_ms_) / 1000UL),
                  static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
@@ -1607,15 +1639,21 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
       }
       ESP_LOGI(TAG, "PV surplus stable; resuming charge with %.1f A", requested);
       this->pv_pause_active_ = false;
+      this->pv_status_ = "PV_CHARGING";
       if (this->state_ == PAUSED) {
         this->transition_(CHARGING);
       }
+    }
+    if (!this->pv_pause_active_ && charge_flow_active) {
+      this->pv_status_ = "PV_CHARGING";
     }
     return requested;
   }
 
   this->pv_surplus_ready_since_ms_ = 0;
   if (!charge_flow_active) {
+    this->pv_status_ = this->inputs_.pv_enabled ? "PV_WAIT_SURPLUS" : "PV_DISABLED";
+    this->limit_reason_ = this->inputs_.pv_enabled ? "PV_BELOW_6A" : "PV_SWITCH_OFF";
     if (requested > 0.0f) {
       ESP_LOGD(TAG, "PV surplus %.1f A below %.1f A; not starting charge flow",
                requested, MIN_CHARGE_CURRENT_A);
@@ -1629,6 +1667,10 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
   }
 
   if (now - this->pv_surplus_low_since_ms_ < PV_SURPLUS_PAUSE_DELAY_MS) {
+    this->pv_pause_timer_remaining_s_ =
+        static_cast<float>(PV_SURPLUS_PAUSE_DELAY_MS - (now - this->pv_surplus_low_since_ms_)) / 1000.0f;
+    this->pv_status_ = "PV_HOLD_6A";
+    this->limit_reason_ = "PV_BELOW_6A_HOLD";
     if (!this->pv_pause_hold_logged_) {
       ESP_LOGI(TAG, "PV surplus %.1f A below %.1f A; holding %.1f A before pause timer expires",
                requested, MIN_CHARGE_CURRENT_A, MIN_CHARGE_CURRENT_A);
@@ -1643,6 +1685,8 @@ float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, 
     this->pv_pause_active_ = true;
     this->transition_(PAUSED);
   }
+  this->pv_status_ = "PV_PAUSED";
+  this->limit_reason_ = "PV_BELOW_6A_PAUSED";
   return 0.0f;
 }
 
@@ -1651,8 +1695,12 @@ bool EvboxMaxComponent::pv_start_release_allowed_(float requested_current) {
 
   const float requested = std::max(0.0f, requested_current);
   const uint32_t now = millis();
+  this->pv_available_current_ = requested;
   if (requested < MIN_CHARGE_CURRENT_A) {
     this->pv_surplus_ready_since_ms_ = 0;
+    this->pv_start_timer_remaining_s_ = 0.0f;
+    this->pv_status_ = this->inputs_.pv_enabled ? "PV_WAIT_SURPLUS" : "PV_DISABLED";
+    this->limit_reason_ = this->inputs_.pv_enabled ? "PV_BELOW_6A" : "PV_SWITCH_OFF";
     ESP_LOGI(TAG, "PV surplus %.1f A below %.1f A; delaying cmd6B start release",
              requested, MIN_CHARGE_CURRENT_A);
     return false;
@@ -1660,18 +1708,28 @@ bool EvboxMaxComponent::pv_start_release_allowed_(float requested_current) {
 
   if (this->pv_surplus_ready_since_ms_ == 0) {
     this->pv_surplus_ready_since_ms_ = now;
+    this->pv_start_timer_remaining_s_ = static_cast<float>(PV_SURPLUS_START_DELAY_MS) / 1000.0f;
+    this->pv_status_ = "PV_WAIT_START";
+    this->limit_reason_ = "PV_START_DELAY";
     ESP_LOGI(TAG, "PV surplus %.1f A available; waiting %lus before cmd6B start release",
              requested, static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
     return false;
   }
 
   if (now - this->pv_surplus_ready_since_ms_ < PV_SURPLUS_START_DELAY_MS) {
+    this->pv_start_timer_remaining_s_ =
+        static_cast<float>(PV_SURPLUS_START_DELAY_MS - (now - this->pv_surplus_ready_since_ms_)) / 1000.0f;
+    this->pv_status_ = "PV_WAIT_START";
+    this->limit_reason_ = "PV_START_DELAY";
     ESP_LOGI(TAG, "PV surplus %.1f A start timer running (%lus/%lus)",
              requested, static_cast<unsigned long>((now - this->pv_surplus_ready_since_ms_) / 1000UL),
              static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
     return false;
   }
 
+  this->pv_start_timer_remaining_s_ = 0.0f;
+  this->pv_status_ = "PV_START_ALLOWED";
+  this->limit_reason_ = "PV_SURPLUS";
   return true;
 }
 
@@ -1895,6 +1953,12 @@ void EvboxMaxComponent::publish_() {
   if (this->current_limit_sensor_ != nullptr) {
     this->current_limit_sensor_->publish_state(this->commanded_current_);
   }
+  if (this->requested_current_sensor_ != nullptr) {
+    this->requested_current_sensor_->publish_state(this->requested_current_);
+  }
+  if (this->allowed_current_sensor_ != nullptr) {
+    this->allowed_current_sensor_->publish_state(this->allowed_current_);
+  }
   if (this->desired_current_sensor_ != nullptr) {
     this->desired_current_sensor_->publish_state(this->desired_current_);
   }
@@ -1903,6 +1967,21 @@ void EvboxMaxComponent::publish_() {
   }
   if (this->returned_current_limit_sensor_ != nullptr && !std::isnan(this->returned_current_limit_)) {
     this->returned_current_limit_sensor_->publish_state(this->returned_current_limit_);
+  }
+  if (this->pv_available_current_sensor_ != nullptr) {
+    this->pv_available_current_sensor_->publish_state(this->pv_available_current_);
+  }
+  if (this->pv_start_timer_sensor_ != nullptr) {
+    this->pv_start_timer_sensor_->publish_state(this->pv_start_timer_remaining_s_);
+  }
+  if (this->pv_pause_timer_sensor_ != nullptr) {
+    this->pv_pause_timer_sensor_->publish_state(this->pv_pause_timer_remaining_s_);
+  }
+  if (this->pv_status_text_sensor_ != nullptr) {
+    this->pv_status_text_sensor_->publish_state(this->pv_status_);
+  }
+  if (this->limit_reason_text_sensor_ != nullptr) {
+    this->limit_reason_text_sensor_->publish_state(this->limit_reason_);
   }
   if (this->l1_current_sensor_ != nullptr) {
     this->l1_current_sensor_->publish_state(this->ev_l1_current_a_);

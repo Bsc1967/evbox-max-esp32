@@ -91,9 +91,16 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_meter_serial_text_sensor(text_sensor::TextSensor *sensor) { this->meter_serial_text_sensor_ = sensor; }
   void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
   void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
+  void set_requested_current_sensor(sensor::Sensor *sensor) { this->requested_current_sensor_ = sensor; }
+  void set_allowed_current_sensor(sensor::Sensor *sensor) { this->allowed_current_sensor_ = sensor; }
   void set_desired_current_sensor(sensor::Sensor *sensor) { this->desired_current_sensor_ = sensor; }
   void set_commanded_current_sensor(sensor::Sensor *sensor) { this->commanded_current_sensor_ = sensor; }
   void set_returned_current_limit_sensor(sensor::Sensor *sensor) { this->returned_current_limit_sensor_ = sensor; }
+  void set_pv_available_current_sensor(sensor::Sensor *sensor) { this->pv_available_current_sensor_ = sensor; }
+  void set_pv_start_timer_sensor(sensor::Sensor *sensor) { this->pv_start_timer_sensor_ = sensor; }
+  void set_pv_pause_timer_sensor(sensor::Sensor *sensor) { this->pv_pause_timer_sensor_ = sensor; }
+  void set_pv_status_text_sensor(text_sensor::TextSensor *sensor) { this->pv_status_text_sensor_ = sensor; }
+  void set_limit_reason_text_sensor(text_sensor::TextSensor *sensor) { this->limit_reason_text_sensor_ = sensor; }
   void set_l1_current_sensor(sensor::Sensor *sensor) { this->l1_current_sensor_ = sensor; }
   void set_l2_current_sensor(sensor::Sensor *sensor) { this->l2_current_sensor_ = sensor; }
   void set_l3_current_sensor(sensor::Sensor *sensor) { this->l3_current_sensor_ = sensor; }
@@ -219,11 +226,18 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   bool settings_restored_{false};
   bool have_session_start_meter_{false};
   float active_current_{0.0f};
+  float requested_current_{0.0f};
+  float allowed_current_{0.0f};
   float desired_current_{0.0f};
   float commanded_current_{0.0f};
   float returned_current_limit_{NAN};
   bool current_limit_returned_{false};
   bool pv_pause_active_{false};
+  float pv_available_current_{0.0f};
+  float pv_start_timer_remaining_s_{0.0f};
+  float pv_pause_timer_remaining_s_{0.0f};
+  std::string pv_status_{"IDLE"};
+  std::string limit_reason_{"UNKNOWN"};
   uint32_t pv_surplus_ready_since_ms_{0};
   uint32_t pv_surplus_low_since_ms_{0};
   bool pv_pause_hold_logged_{false};
@@ -300,9 +314,16 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *meter_serial_text_sensor_{nullptr};
   sensor::Sensor *ev_current_sensor_{nullptr};
   sensor::Sensor *current_limit_sensor_{nullptr};
+  sensor::Sensor *requested_current_sensor_{nullptr};
+  sensor::Sensor *allowed_current_sensor_{nullptr};
   sensor::Sensor *desired_current_sensor_{nullptr};
   sensor::Sensor *commanded_current_sensor_{nullptr};
   sensor::Sensor *returned_current_limit_sensor_{nullptr};
+  sensor::Sensor *pv_available_current_sensor_{nullptr};
+  sensor::Sensor *pv_start_timer_sensor_{nullptr};
+  sensor::Sensor *pv_pause_timer_sensor_{nullptr};
+  text_sensor::TextSensor *pv_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *limit_reason_text_sensor_{nullptr};
   sensor::Sensor *l1_current_sensor_{nullptr};
   sensor::Sensor *l2_current_sensor_{nullptr};
   sensor::Sensor *l3_current_sensor_{nullptr};
