@@ -10,7 +10,7 @@ views:
         cards:
           - type: gauge
             name: Gestuurd
-            entity: sensor.evloadbalance_waveshare_evbox_commanded_current
+            entity: sensor.evbox_commanded_current
             min: 0
             max: 16
             severity:
@@ -19,7 +19,7 @@ views:
               red: 16
           - type: gauge
             name: Actueel EV
-            entity: sensor.evloadbalance_waveshare_evbox_current
+            entity: sensor.evbox_current
             min: 0
             max: 16
             severity:
@@ -28,7 +28,7 @@ views:
               red: 16
           - type: gauge
             name: PV beschikbaar
-            entity: sensor.evloadbalance_waveshare_evbox_pv_available_current
+            entity: sensor.evbox_pv_available_current
             min: 0
             max: 16
             severity:
@@ -40,87 +40,87 @@ views:
         title: Bediening
         show_header_toggle: false
         entities:
-          - entity: select.evloadbalance_waveshare_charge_mode
+          - entity: select.evbox_charge_mode
             name: Modus
-          - entity: switch.evloadbalance_waveshare_enable_pv_mode
+          - entity: switch.evbox_enable_pv_mode
             name: PV mode actief
-          - entity: switch.evloadbalance_waveshare_start_charging
+          - entity: switch.evbox_start_charging
             name: Start laden
-          - entity: switch.evloadbalance_waveshare_stop_charging
+          - entity: switch.evbox_stop_charging
             name: Stop laden
-          - entity: number.evloadbalance_waveshare_manual_current
+          - entity: number.evbox_manual_current
             name: Manuele laadstroom
-          - entity: number.evloadbalance_waveshare_max_current
+          - entity: number.evbox_max_current
             name: Maximale laadstroom
-          - entity: number.evloadbalance_waveshare_evbox_group_breaker_current
+          - entity: number.evbox_group_breaker_current
             name: EVBox groepzekering
-          - entity: number.evloadbalance_waveshare_main_fuse_current
+          - entity: number.evbox_main_fuse_current
             name: Hoofdzekering
-          - entity: select.evloadbalance_waveshare_failsafe_mode
+          - entity: select.evbox_failsafe_mode
             name: Failsafe mode
-          - entity: number.evloadbalance_waveshare_failsafe_current
+          - entity: number.evbox_failsafe_current
             name: Failsafe stroom
 
       - type: entities
         title: Waarom deze stroom?
         show_header_toggle: false
         entities:
-          - entity: sensor.evloadbalance_waveshare_evbox_state
+          - entity: sensor.evbox_state
             name: EVBox state
-          - entity: sensor.evloadbalance_waveshare_evbox_status
+          - entity: sensor.evbox_status
             name: EVBox status
-          - entity: sensor.evloadbalance_waveshare_evbox_pv_status
+          - entity: sensor.evbox_pv_status
             name: PV status
-          - entity: sensor.evloadbalance_waveshare_evbox_limit_reason
+          - entity: sensor.evbox_limit_reason
             name: Begrenzingsreden
-          - entity: sensor.evloadbalance_waveshare_evbox_requested_current
+          - entity: sensor.evbox_requested_current
             name: Gevraagd voor beveiliging
-          - entity: sensor.evloadbalance_waveshare_evbox_allowed_current
+          - entity: sensor.evbox_allowed_current
             name: Toegestaan na zekeringen
-          - entity: sensor.evloadbalance_waveshare_evbox_commanded_current
+          - entity: sensor.evbox_commanded_current
             name: Naar EVBox gestuurd
-          - entity: sensor.evloadbalance_waveshare_evbox_returned_current_limit
+          - entity: sensor.evbox_returned_current_limit
             name: Door EVBox teruggemeld
-          - entity: sensor.evloadbalance_waveshare_evbox_pv_start_timer
+          - entity: sensor.evbox_pv_start_timer
             name: PV starttimer resterend
-          - entity: sensor.evloadbalance_waveshare_evbox_pv_pause_timer
+          - entity: sensor.evbox_pv_pause_timer
             name: PV pauzetimer resterend
 
       - type: history-graph
         title: Laadregeling
         hours_to_show: 4
         entities:
-          - sensor.evloadbalance_waveshare_evbox_requested_current
-          - sensor.evloadbalance_waveshare_evbox_allowed_current
-          - sensor.evloadbalance_waveshare_evbox_commanded_current
-          - sensor.evloadbalance_waveshare_evbox_returned_current_limit
-          - sensor.evloadbalance_waveshare_evbox_current
+          - sensor.evbox_requested_current
+          - sensor.evbox_allowed_current
+          - sensor.evbox_commanded_current
+          - sensor.evbox_returned_current_limit
+          - sensor.evbox_current
 
       - type: entities
         title: Aansluiting en ChargeBox
         show_header_toggle: false
         entities:
-          - entity: sensor.evloadbalance_waveshare_evbox_communication
+          - entity: sensor.evbox_communication
             name: Communicatie
-          - entity: sensor.evloadbalance_waveshare_evbox_protocol_profile
+          - entity: sensor.evbox_protocol_profile
             name: Protocolprofiel
-          - entity: sensor.evloadbalance_waveshare_evbox_cb_serial
+          - entity: sensor.evbox_cb_serial
             name: CB serial
-          - entity: sensor.evloadbalance_waveshare_evbox_cb_status_detail
+          - entity: sensor.evbox_cb_status_detail
             name: CB status detail
-          - entity: sensor.evloadbalance_waveshare_evbox_current_request_state
+          - entity: sensor.evbox_current_request_state
             name: CB stroomvraag
-          - entity: sensor.evloadbalance_waveshare_evbox_cable_status
+          - entity: sensor.evbox_cable_status
             name: Kabelstatus
-          - entity: sensor.evloadbalance_waveshare_evbox_cable_max_current
+          - entity: sensor.evbox_cable_max_current
             name: Kabel max stroom
-          - entity: sensor.evloadbalance_waveshare_evbox_lock_status
+          - entity: sensor.evbox_lock_status
             name: Lock status
-          - entity: sensor.evloadbalance_waveshare_evbox_cb_lock_state
+          - entity: sensor.evbox_cb_lock_state
             name: CB lock bit
-          - entity: sensor.evloadbalance_waveshare_evbox_cb_is_charging
+          - entity: sensor.evbox_cb_is_charging
             name: CB charging bit
-          - entity: sensor.evloadbalance_waveshare_evbox_cb_led_colour
+          - entity: sensor.evbox_cb_led_colour
             name: CB LED code
 
       - type: grid
@@ -130,41 +130,41 @@ views:
           - type: entities
             title: EVBox L1
             entities:
-              - sensor.evloadbalance_waveshare_evbox_l1_voltage
-              - sensor.evloadbalance_waveshare_evbox_l1_current
-              - sensor.evloadbalance_waveshare_evbox_l1_power_factor
+              - sensor.evbox_l1_voltage
+              - sensor.evbox_l1_current
+              - sensor.evbox_l1_power_factor
           - type: entities
             title: EVBox L2
             entities:
-              - sensor.evloadbalance_waveshare_evbox_l2_voltage
-              - sensor.evloadbalance_waveshare_evbox_l2_current
-              - sensor.evloadbalance_waveshare_evbox_l2_power_factor
+              - sensor.evbox_l2_voltage
+              - sensor.evbox_l2_current
+              - sensor.evbox_l2_power_factor
           - type: entities
             title: EVBox L3
             entities:
-              - sensor.evloadbalance_waveshare_evbox_l3_voltage
-              - sensor.evloadbalance_waveshare_evbox_l3_current
-              - sensor.evloadbalance_waveshare_evbox_l3_power_factor
+              - sensor.evbox_l3_voltage
+              - sensor.evbox_l3_current
+              - sensor.evbox_l3_power_factor
 
       - type: entities
         title: EVBox meter en sessie
         show_header_toggle: false
         entities:
-          - entity: sensor.evloadbalance_waveshare_evbox_meter_status
+          - entity: sensor.evbox_meter_status
             name: Meterstatus
-          - entity: sensor.evloadbalance_waveshare_evbox_meter_model
+          - entity: sensor.evbox_meter_model
             name: Metermodel
-          - entity: sensor.evloadbalance_waveshare_evbox_meter_serial
+          - entity: sensor.evbox_meter_serial
             name: Meterserial
-          - entity: sensor.evloadbalance_waveshare_evbox_meter_value
+          - entity: sensor.evbox_meter_value
             name: Meterstand
-          - entity: sensor.evloadbalance_waveshare_evbox_raw_meter_wh
+          - entity: sensor.evbox_raw_meter_wh
             name: Ruwe meterstand Wh
-          - entity: sensor.evloadbalance_waveshare_evbox_session_energy
+          - entity: sensor.evbox_session_energy
             name: Sessie energie
-          - entity: sensor.evloadbalance_waveshare_evbox_power
+          - entity: sensor.evbox_power
             name: EVBox vermogen
-          - entity: sensor.evloadbalance_waveshare_evbox_temperature
+          - entity: sensor.evbox_temperature
             name: Temperatuur
 
       - type: grid
@@ -173,7 +173,7 @@ views:
         cards:
           - type: gauge
             name: Janitza L1
-            entity: sensor.evloadbalance_waveshare_janitza_l1_current
+            entity: sensor.evbox_janitza_l1_current
             min: 0
             max: 25
             severity:
@@ -182,7 +182,7 @@ views:
               red: 25
           - type: gauge
             name: Janitza L2
-            entity: sensor.evloadbalance_waveshare_janitza_l2_current
+            entity: sensor.evbox_janitza_l2_current
             min: 0
             max: 25
             severity:
@@ -191,7 +191,7 @@ views:
               red: 25
           - type: gauge
             name: Janitza L3
-            entity: sensor.evloadbalance_waveshare_janitza_l3_current
+            entity: sensor.evbox_janitza_l3_current
             min: 0
             max: 25
             severity:
@@ -203,13 +203,13 @@ views:
         title: Janitza netmeting
         show_header_toggle: false
         entities:
-          - sensor.evloadbalance_waveshare_janitza_communication
-          - sensor.evloadbalance_waveshare_janitza_total_power
-          - sensor.evloadbalance_waveshare_janitza_import_power
-          - sensor.evloadbalance_waveshare_janitza_export_power
-          - sensor.evloadbalance_waveshare_janitza_l1_power
-          - sensor.evloadbalance_waveshare_janitza_l2_power
-          - sensor.evloadbalance_waveshare_janitza_l3_power
-          - sensor.evloadbalance_waveshare_janitza_l1_voltage
-          - sensor.evloadbalance_waveshare_janitza_l2_voltage
-          - sensor.evloadbalance_waveshare_janitza_l3_voltage
+          - sensor.evbox_janitza_communication
+          - sensor.evbox_janitza_total_power
+          - sensor.evbox_janitza_import_power
+          - sensor.evbox_janitza_export_power
+          - sensor.evbox_janitza_l1_power
+          - sensor.evbox_janitza_l2_power
+          - sensor.evbox_janitza_l3_power
+          - sensor.evbox_janitza_l1_voltage
+          - sensor.evbox_janitza_l2_voltage
+          - sensor.evbox_janitza_l3_voltage
