@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@dfa36d1886bbfb6aa19571045581b2c91eff52e2
+  - source: github://Bsc1967/evbox-max-esp32@efad7c1b12bd799539789b3f04c54cb865c24993
     refresh: 0s
     components:
       - evbox_max
@@ -59,7 +59,7 @@ uart:
 evbox_max:
   id: evbox
   uart_id: evbox_rs485_uart
-  mode: PV_SURPLUS
+  mode: MANUAL
   charge_phases: 1
   manual_current: 6
   max_current: 16
@@ -201,16 +201,16 @@ number:
     evbox_max_id: evbox
     type: MANUAL_CURRENT
     name: Manual Current
-    min_value: 0
-    max_value: 32
+    min_value: 6
+    max_value: 16
     step: 1
 
   - platform: evbox_max
     evbox_max_id: evbox
     type: MAX_CURRENT
     name: Max Current
-    min_value: 0
-    max_value: 32
+    min_value: 6
+    max_value: 16
     step: 1
 
   - platform: evbox_max
@@ -225,7 +225,7 @@ number:
     evbox_max_id: evbox
     type: CHARGER_BREAKER_CURRENT
     name: EVBox Group Breaker Current
-    min_value: 0
+    min_value: 6
     max_value: 32
     step: 1
 
