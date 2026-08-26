@@ -56,6 +56,14 @@ views:
             name: EVBox groepzekering
           - entity: number.auto_evbox_main_fuse_current
             name: Hoofdzekering
+          - entity: sensor.auto_evbox_evbox_grid_phase_mapping
+            name: Fase mapping actief
+          - entity: select.auto_evbox_evbox_l1_grid_phase
+            name: EVBox L1 op Janitza fase
+          - entity: select.auto_evbox_evbox_l2_grid_phase
+            name: EVBox L2 op Janitza fase
+          - entity: select.auto_evbox_evbox_l3_grid_phase
+            name: EVBox L3 op Janitza fase
           - entity: select.auto_evbox_failsafe_mode
             name: Failsafe mode
           - entity: number.auto_evbox_failsafe_current

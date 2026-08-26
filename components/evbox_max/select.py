@@ -20,15 +20,16 @@ SELECT_TYPES = {
 CONFIG_SCHEMA = select.select_schema(EvboxModeSelect).extend(
     {
         cv.GenerateID(CONF_EVBOX_MAX_ID): cv.use_id(EvboxMaxComponent),
-        cv.Required(CONF_TYPE): cv.enum(SELECT_TYPES, upper=True),
+        cv.Required(CONF_TYPE): cv.one_of(*SELECT_TYPES.keys(), upper=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
 
 async def to_code(config):
-    if config[CONF_TYPE] == EvboxSelectType.EVBOX_SELECT_MODE:
+    select_type = config[CONF_TYPE]
+    if select_type == "MODE":
         options = ["MANUAL", "LOAD_BALANCING", "PV_SURPLUS", "DISABLED"]
-    elif config[CONF_TYPE] == EvboxSelectType.EVBOX_SELECT_FAILSAFE_MODE:
+    elif select_type == "FAILSAFE_MODE":
         options = ["STOP", "LIMIT_6A"]
     else:
         options = ["L1", "L2", "L3"]
@@ -36,4 +37,4 @@ async def to_code(config):
     await cg.register_component(var, config)
     parent = await cg.get_variable(config[CONF_EVBOX_MAX_ID])
     cg.add(var.set_parent(parent))
-    cg.add(var.set_type(config[CONF_TYPE]))
+    cg.add(var.set_type(SELECT_TYPES[select_type]))
