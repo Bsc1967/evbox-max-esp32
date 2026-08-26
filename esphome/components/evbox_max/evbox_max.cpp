@@ -947,8 +947,18 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         const bool accept_session = !this->stop_requested_;
         if (accept_session) {
-          this->session_start_meter_kwh_ = this->meter_value_kwh_;
-          this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
+          const bool continuing_session = this->have_session_start_meter_ &&
+                                          (this->session_active_ || this->state_ == CHARGING ||
+                                           this->state_ == PAUSED || this->state_ == SESSION_STARTING);
+          if (continuing_session) {
+            ESP_LOGI(TAG, "CB metering start received during active/paused session; keeping session baseline %.3f kWh",
+                     this->session_start_meter_kwh_);
+          } else {
+            this->session_start_meter_kwh_ = this->meter_value_kwh_;
+            this->have_session_start_meter_ = !std::isnan(this->meter_value_kwh_) && this->meter_value_kwh_ > 0.0f;
+            this->session_energy_kwh_ = 0.0f;
+            ESP_LOGI(TAG, "CB metering start baseline set to %.3f kWh", this->session_start_meter_kwh_);
+          }
           this->current_start_released_ = true;
           this->start_requested_ = true;
           if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
