@@ -175,6 +175,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void schedule_current_release_(uint32_t delay_ms);
   void run_delayed_current_release_();
   void send_current_setpoint_(float amps);
+  float apply_minimum_current_policy_(float requested_current, bool charge_flow_active);
+  bool pv_start_release_allowed_(float requested_current);
   bool charge_flow_requested_() const;
   bool current_setpoint_allowed_() const;
   bool authorization_allowed_() const;
@@ -220,6 +222,10 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   float commanded_current_{0.0f};
   float returned_current_limit_{NAN};
   bool current_limit_returned_{false};
+  bool pv_pause_active_{false};
+  uint32_t pv_surplus_ready_since_ms_{0};
+  uint32_t pv_surplus_low_since_ms_{0};
+  bool pv_pause_hold_logged_{false};
   float ev_l1_current_a_{0.0f};
   float ev_l2_current_a_{0.0f};
   float ev_l3_current_a_{0.0f};

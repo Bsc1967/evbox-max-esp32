@@ -13,6 +13,9 @@ static constexpr uint8_t ADDR_BROADCAST = 0xBC;
 static constexpr uint16_t ACK = 0xAA00;
 static constexpr uint32_t SETTINGS_MAGIC = 0x45564258UL;
 static constexpr uint16_t SETTINGS_VERSION = 1;
+static constexpr float MIN_CHARGE_CURRENT_A = 6.0f;
+static constexpr uint32_t PV_SURPLUS_START_DELAY_MS = 60000UL;
+static constexpr uint32_t PV_SURPLUS_PAUSE_DELAY_MS = 300000UL;
 static const char *const KNOWN_GOOD_METER_CONFIG =
     "00000E10000003840000001E03000001010030FF000000000000000100010000000003E8010000000100";
 
@@ -32,6 +35,10 @@ void EvboxMaxComponent::setup() {
   this->active_current_ = 0.0f;
   this->desired_current_ = 0.0f;
   this->commanded_current_ = 0.0f;
+  this->pv_pause_active_ = false;
+  this->pv_surplus_ready_since_ms_ = 0;
+  this->pv_surplus_low_since_ms_ = 0;
+  this->pv_pause_hold_logged_ = false;
   this->last_current_request_code_ = 0;
   this->have_last_current_request_code_ = false;
   this->last_current_request_ms_ = 0;
@@ -115,10 +122,14 @@ void EvboxMaxComponent::loop() {
     }
     if (!this->stop_requested_ && this->charge_flow_requested_() && this->current_setpoint_allowed_()) {
       this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-      float delta = this->desired_current_ - this->active_current_;
+      const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
+                                      this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
+                                      this->state_ == PAUSED;
+      const float commanded_current = this->apply_minimum_current_policy_(this->desired_current_, charge_flow_active);
+      float delta = commanded_current - this->active_current_;
       if (delta < 0.0f) delta = -delta;
-      if (this->active_current_ <= 0.0f || delta >= 0.5f) {
-        this->send_current_setpoint_(this->desired_current_);
+      if ((this->active_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
+        this->send_current_setpoint_(commanded_current);
       }
     }
     if (this->start_requested_ && this->current_start_released_ && !this->session_active_ &&
@@ -245,15 +256,16 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
   const float next_current = this->controller_.calculate_current(this->inputs_);
   this->desired_current_ = next_current;
   const bool charge_flow_active = this->session_active_ || this->state_ == STARTING || this->state_ == SESSION_STARTING ||
-                                  this->state_ == CHARGING;
-  if (!this->stop_requested_ && charge_flow_active && next_current < this->active_current_) {
+                                  this->state_ == CHARGING || this->state_ == PAUSED;
+  const float commanded_current = this->apply_minimum_current_policy_(next_current, charge_flow_active);
+  if (!this->stop_requested_ && charge_flow_active && commanded_current < this->active_current_) {
     if (!this->current_setpoint_allowed_()) {
-      ESP_LOGD(TAG, "Calculated lower current %.1f A, but cmd6B is not released yet", next_current);
+      ESP_LOGD(TAG, "Calculated lower current %.1f A, but cmd6B is not released yet", commanded_current);
       return;
     }
     // Overload response path: do not wait for the next heartbeat tick when the
     // meter says current must go down. A lower setpoint is sent immediately.
-    this->send_current_setpoint_(next_current);
+    this->send_current_setpoint_(commanded_current);
     this->last_periodic_cmd18_ms_ = millis();
   }
 }
@@ -277,6 +289,9 @@ void EvboxMaxComponent::start_session() {
   this->remote_start_sent_ms_ = 0;
   this->remote_start_timeout_logged_ = false;
   this->start_stall_logged_ = false;
+  this->pv_pause_active_ = false;
+  this->pv_surplus_low_since_ms_ = 0;
+  this->pv_pause_hold_logged_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
   ESP_LOGI(TAG, "Local start requested; using CB autostart flow, waiting for cmd22/cmd6A and not sending cmd31");
@@ -316,6 +331,10 @@ void EvboxMaxComponent::stop_session() {
   this->remote_start_pending_ = false;
   this->start_requested_ms_ = 0;
   this->start_stall_logged_ = false;
+  this->pv_pause_active_ = false;
+  this->pv_surplus_ready_since_ms_ = 0;
+  this->pv_surplus_low_since_ms_ = 0;
+  this->pv_pause_hold_logged_ = false;
   this->send_remote_stop_();
   this->transition_(FINISHING);
 }
@@ -631,6 +650,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           this->automatic_remote_start_attempted_ = false;
           this->remote_start_pending_ = false;
           this->start_requested_ms_ = 0;
+          this->pv_pause_active_ = false;
+          this->pv_surplus_ready_since_ms_ = 0;
+          this->pv_surplus_low_since_ms_ = 0;
+          this->pv_pause_hold_logged_ = false;
           this->transition_(IDLE);
         } else if (code == 0x17) {
           if (this->stop_requested_) {
@@ -1470,10 +1493,18 @@ void EvboxMaxComponent::run_delayed_current_release_() {
     return;
   }
 
-  this->current_start_released_ = true;
   this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-  ESP_LOGI(TAG, "Sending delayed cmd6B current release %.1f A", this->desired_current_);
-  this->send_current_setpoint_(this->desired_current_);
+  if (!this->pv_start_release_allowed_(this->desired_current_)) {
+    this->delayed_current_release_pending_ = true;
+    this->delayed_current_release_due_ms_ = now + 1000UL;
+    return;
+  }
+
+  this->current_start_released_ = true;
+  const float commanded_current = this->apply_minimum_current_policy_(this->desired_current_, true);
+  ESP_LOGI(TAG, "Sending delayed cmd6B current release desired=%.1f A commanded=%.1f A",
+           this->desired_current_, commanded_current);
+  this->send_current_setpoint_(commanded_current);
 }
 
 void EvboxMaxComponent::send_periodic_cmd18_() {
@@ -1482,14 +1513,115 @@ void EvboxMaxComponent::send_periodic_cmd18_() {
   this->send_status_update_request_();
 }
 
+float EvboxMaxComponent::apply_minimum_current_policy_(float requested_current, bool charge_flow_active) {
+  const float requested = std::max(0.0f, requested_current);
+  if (this->controller_.mode() != CHARGING_MODE_PV_SURPLUS) {
+    this->pv_pause_active_ = false;
+    this->pv_surplus_ready_since_ms_ = 0;
+    this->pv_surplus_low_since_ms_ = 0;
+    this->pv_pause_hold_logged_ = false;
+    if (requested > 0.0f && requested < MIN_CHARGE_CURRENT_A) {
+      ESP_LOGW(TAG, "Refusing %.1f A setpoint below AC minimum %.1f A; treating as 0 A",
+               requested, MIN_CHARGE_CURRENT_A);
+      return 0.0f;
+    }
+    return requested;
+  }
+
+  const uint32_t now = millis();
+  if (requested >= MIN_CHARGE_CURRENT_A) {
+    this->pv_surplus_low_since_ms_ = 0;
+    this->pv_pause_hold_logged_ = false;
+    if (this->pv_surplus_ready_since_ms_ == 0) {
+      this->pv_surplus_ready_since_ms_ = now;
+      ESP_LOGI(TAG, "PV surplus %.1f A is above %.1f A; starting/hysteresis timer",
+               requested, MIN_CHARGE_CURRENT_A);
+    }
+    if (this->pv_pause_active_) {
+      if (now - this->pv_surplus_ready_since_ms_ < PV_SURPLUS_START_DELAY_MS) {
+        ESP_LOGI(TAG, "PV surplus recovered to %.1f A; waiting before resume (%lus/%lus)",
+                 requested, static_cast<unsigned long>((now - this->pv_surplus_ready_since_ms_) / 1000UL),
+                 static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
+        return 0.0f;
+      }
+      ESP_LOGI(TAG, "PV surplus stable; resuming charge with %.1f A", requested);
+      this->pv_pause_active_ = false;
+      if (this->state_ == PAUSED) {
+        this->transition_(CHARGING);
+      }
+    }
+    return requested;
+  }
+
+  this->pv_surplus_ready_since_ms_ = 0;
+  if (!charge_flow_active) {
+    if (requested > 0.0f) {
+      ESP_LOGD(TAG, "PV surplus %.1f A below %.1f A; not starting charge flow",
+               requested, MIN_CHARGE_CURRENT_A);
+    }
+    return 0.0f;
+  }
+
+  if (this->pv_surplus_low_since_ms_ == 0) {
+    this->pv_surplus_low_since_ms_ = now;
+    this->pv_pause_hold_logged_ = false;
+  }
+
+  if (now - this->pv_surplus_low_since_ms_ < PV_SURPLUS_PAUSE_DELAY_MS) {
+    if (!this->pv_pause_hold_logged_) {
+      ESP_LOGI(TAG, "PV surplus %.1f A below %.1f A; holding %.1f A before pause timer expires",
+               requested, MIN_CHARGE_CURRENT_A, MIN_CHARGE_CURRENT_A);
+      this->pv_pause_hold_logged_ = true;
+    }
+    return MIN_CHARGE_CURRENT_A;
+  }
+
+  if (!this->pv_pause_active_) {
+    ESP_LOGI(TAG, "PV surplus stayed below %.1f A for %lus; pausing charge without remote stop",
+             MIN_CHARGE_CURRENT_A, static_cast<unsigned long>(PV_SURPLUS_PAUSE_DELAY_MS / 1000UL));
+    this->pv_pause_active_ = true;
+    this->transition_(PAUSED);
+  }
+  return 0.0f;
+}
+
+bool EvboxMaxComponent::pv_start_release_allowed_(float requested_current) {
+  if (this->controller_.mode() != CHARGING_MODE_PV_SURPLUS) return true;
+
+  const float requested = std::max(0.0f, requested_current);
+  const uint32_t now = millis();
+  if (requested < MIN_CHARGE_CURRENT_A) {
+    this->pv_surplus_ready_since_ms_ = 0;
+    ESP_LOGI(TAG, "PV surplus %.1f A below %.1f A; delaying cmd6B start release",
+             requested, MIN_CHARGE_CURRENT_A);
+    return false;
+  }
+
+  if (this->pv_surplus_ready_since_ms_ == 0) {
+    this->pv_surplus_ready_since_ms_ = now;
+    ESP_LOGI(TAG, "PV surplus %.1f A available; waiting %lus before cmd6B start release",
+             requested, static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
+    return false;
+  }
+
+  if (now - this->pv_surplus_ready_since_ms_ < PV_SURPLUS_START_DELAY_MS) {
+    ESP_LOGI(TAG, "PV surplus %.1f A start timer running (%lus/%lus)",
+             requested, static_cast<unsigned long>((now - this->pv_surplus_ready_since_ms_) / 1000UL),
+             static_cast<unsigned long>(PV_SURPLUS_START_DELAY_MS / 1000UL));
+    return false;
+  }
+
+  return true;
+}
+
 bool EvboxMaxComponent::charge_flow_requested_() const {
   return this->start_requested_ || this->session_active_ || this->current_start_released_ ||
-         this->state_ == SESSION_STARTING || this->state_ == CHARGING;
+         this->state_ == SESSION_STARTING || this->state_ == CHARGING || this->state_ == PAUSED;
 }
 
 bool EvboxMaxComponent::current_setpoint_allowed_() const {
   return this->current_start_released_ || this->session_active_ || this->state_ == SESSION_STARTING ||
-         this->state_ == CHARGING;
+         this->state_ == CHARGING || this->state_ == PAUSED;
 }
 
 bool EvboxMaxComponent::authorization_allowed_() const {
@@ -1579,6 +1711,11 @@ const char *EvboxMaxComponent::current_request_name_(uint8_t code) const {
 
 void EvboxMaxComponent::send_current_setpoint_(float amps) {
   if (this->chargebox_address_ == 0) return;
+  if (amps > 0.0f && amps < MIN_CHARGE_CURRENT_A) {
+    ESP_LOGW(TAG, "Refusing cmd6B %.1f A below AC minimum %.1f A; sending 0 A suspend instead",
+             amps, MIN_CHARGE_CURRENT_A);
+    amps = 0.0f;
+  }
   this->commanded_current_ = amps;
   this->active_current_ = amps;
   this->current_limit_returned_ = false;
