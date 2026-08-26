@@ -1843,15 +1843,18 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   const uint8_t phase_mask = this->evbox_active_phase_mask_ != 0 ? this->evbox_active_phase_mask_ : 0x01;
   // Geekabit/Ricardo captures send all three cmd6B phase fields. Some G3
   // firmware stays in CONNECTED_WAITING when inactive phase fields are zero.
+  const uint16_t common_tenths = tenths == 0 ? 0 : 60;
   const uint16_t l1_tenths = tenths;
   const uint16_t l2_tenths = tenths;
   const uint16_t l3_tenths = tenths;
-  ESP_LOGI(TAG, "Sending commanded current limit %.1f A to CB all cmd6B phase fields; detected mask=0x%02X L1=%.1fA L2=%.1fA L3=%.1fA",
-           static_cast<float>(tenths) / 10.0f, phase_mask, static_cast<float>(l1_tenths) / 10.0f,
+  const std::string payload =
+      std::string("01") + hex_word(common_tenths) + hex_word(l1_tenths) + hex_word(l2_tenths) + hex_word(l3_tenths);
+  ESP_LOGI(TAG,
+           "Sending commanded current limit %.1f A to CB cmd6B payload=%s; detected mask=0x%02X common=%.1fA L1=%.1fA L2=%.1fA L3=%.1fA",
+           static_cast<float>(tenths) / 10.0f, payload.c_str(), phase_mask, static_cast<float>(common_tenths) / 10.0f,
+           static_cast<float>(l1_tenths) / 10.0f,
            static_cast<float>(l2_tenths) / 10.0f, static_cast<float>(l3_tenths) / 10.0f);
-  this->send_packet_(this->chargebox_address_, 0x6B,
-                     std::string("01") + hex_word(60) + hex_word(l1_tenths) + hex_word(l2_tenths) +
-                         hex_word(l3_tenths));
+  this->send_packet_(this->chargebox_address_, 0x6B, payload);
 }
 
 uint32_t EvboxMaxComponent::seconds_since_2000_() const {
