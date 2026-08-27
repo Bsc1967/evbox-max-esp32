@@ -209,6 +209,7 @@ void EvboxMaxComponent::dump_config() {
 void EvboxMaxComponent::set_mode(ChargingMode mode) {
   this->controller_.set_mode(mode);
   this->save_settings_();
+  this->apply_current_limit_now_("charge mode changed");
 }
 
 void EvboxMaxComponent::set_failsafe_mode(FailsafeMode mode) {
@@ -828,28 +829,44 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           }
         } else if (code == 0x49) {
           const bool local_stop_active = this->stop_requested_;
+          const bool positive_setpoint_active = this->commanded_current_ >= MIN_CHARGE_CURRENT_A &&
+                                                !this->pv_pause_active_ && !local_stop_active;
           this->stop_requested_ = local_stop_active;
-          this->session_active_ = !local_stop_active;
+          this->session_active_ = positive_setpoint_active || !local_stop_active;
           this->start_requested_ = false;
-          this->current_start_released_ = !local_stop_active;
+          this->current_start_released_ = positive_setpoint_active || !local_stop_active;
           this->delayed_current_release_pending_ = false;
           this->finished_reset_pending_ = false;
           this->delayed_start_trigger_pending_ = false;
           this->remote_start_pending_ = false;
-          this->returned_current_limit_ = 0.0f;
-          this->current_limit_returned_ = true;
           if (local_stop_active) {
+            this->returned_current_limit_ = 0.0f;
+            this->current_limit_returned_ = true;
             this->pv_pause_active_ = false;
             this->pv_status_ = "USER_STOPPED";
             this->limit_reason_ = "USER_STOP";
+          } else if (positive_setpoint_active) {
+            ESP_LOGI(TAG,
+                     "CB reports 0x49/no EV current while %.1f A is commanded; keeping active charge flow and waiting for EV draw/current feedback",
+                     this->commanded_current_);
           } else if (this->controller_.mode() == CHARGING_MODE_PV_SURPLUS) {
+            this->returned_current_limit_ = 0.0f;
+            this->current_limit_returned_ = true;
             this->pv_pause_active_ = true;
             this->pv_status_ = "PV_PAUSED";
             this->limit_reason_ = "PV_BELOW_6A_PAUSED";
+          } else {
+            this->returned_current_limit_ = 0.0f;
+            this->current_limit_returned_ = true;
           }
           ESP_LOGI(TAG, "CB reports 0x49 with locked cable and no charging current; treating as %s",
-                   local_stop_active ? "manual stop/suspended session" : "paused/suspended session");
-          this->transition_(PAUSED);
+                   local_stop_active ? "manual stop/suspended session" :
+                   (positive_setpoint_active ? "active session waiting for EV current" : "paused/suspended session"));
+          if (positive_setpoint_active) {
+            this->transition_(this->state_ == SESSION_STARTING ? SESSION_STARTING : CHARGING);
+          } else {
+            this->transition_(PAUSED);
+          }
         } else if (code == 0x4B) {
           this->stop_requested_ = false;
           this->session_active_ = false;
