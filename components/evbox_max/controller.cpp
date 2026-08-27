@@ -51,12 +51,15 @@ float ChargeController::pv_surplus_(const ControlInputs &inputs) const {
     return 0.0f;
   }
   // Dutch net metering is settled over the three phases together. Use total
-  // signed active power for PV surplus, then let apply_safety_limits_ protect
-  // every active charging phase against the main fuse.
+  // signed active power for PV surplus. When the EV is already charging, the
+  // measured grid power already includes that EV load, so add the active EV
+  // current back to calculate the new target setpoint instead of only the
+  // remaining export headroom.
   const float phase_count = inputs.charge_phases > 0 ? inputs.charge_phases : 1;
-  const float net_export_w = inputs.grid_total_power_w < 0.0f ? -inputs.grid_total_power_w : inputs.grid_export_w;
-  const float surplus_a = net_export_w / (230.0f * phase_count);
-  return clamp(surplus_a, 0.0f, inputs.max_current);
+  const float grid_correction_a = -inputs.grid_total_power_w / (230.0f * phase_count);
+  const float current_ev_setpoint_a = inputs.ev_current > 0.2f ? inputs.ev_current : 0.0f;
+  const float target_a = current_ev_setpoint_a + grid_correction_a;
+  return clamp(target_a, 0.0f, inputs.max_current);
 }
 
 float ChargeController::apply_safety_limits_(float requested_current, const ControlInputs &inputs) const {
