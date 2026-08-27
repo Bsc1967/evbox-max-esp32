@@ -249,6 +249,9 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   float pv_available_current_{0.0f};
   float pv_start_timer_remaining_s_{0.0f};
   float pv_pause_timer_remaining_s_{0.0f};
+  float pv_grid_total_power_avg_w_{0.0f};
+  uint32_t pv_grid_total_power_avg_last_ms_{0};
+  bool pv_grid_total_power_avg_valid_{false};
   std::string pv_status_{"IDLE"};
   std::string limit_reason_{"UNKNOWN"};
   uint32_t pv_surplus_ready_since_ms_{0};

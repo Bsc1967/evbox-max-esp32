@@ -16,6 +16,7 @@ static constexpr uint16_t SETTINGS_VERSION = 2;
 static constexpr float MIN_CHARGE_CURRENT_A = 6.0f;
 static constexpr uint32_t PV_SURPLUS_START_DELAY_MS = 60000UL;
 static constexpr uint32_t PV_SURPLUS_PAUSE_DELAY_MS = 10000UL;
+static constexpr uint32_t PV_SURPLUS_AVERAGE_WINDOW_MS = 60000UL;
 static const char *const KNOWN_GOOD_METER_CONFIG =
     "00000E10000003840000001E03000001010030FF000000000000000100010000000003E8010000000100";
 
@@ -41,6 +42,9 @@ void EvboxMaxComponent::setup() {
   this->pv_available_current_ = 0.0f;
   this->pv_start_timer_remaining_s_ = 0.0f;
   this->pv_pause_timer_remaining_s_ = 0.0f;
+  this->pv_grid_total_power_avg_w_ = 0.0f;
+  this->pv_grid_total_power_avg_last_ms_ = 0;
+  this->pv_grid_total_power_avg_valid_ = false;
   this->pv_status_ = "IDLE";
   this->limit_reason_ = "UNKNOWN";
   this->pv_surplus_ready_since_ms_ = 0;
@@ -300,9 +304,28 @@ void EvboxMaxComponent::update_janitza(float import_w, float export_w, float l1_
                                       float l1_power_w, float l2_power_w, float l3_power_w, bool online) {
   // The Janitza component only provides measurements. Charging policy remains
   // in ChargeController so meter communication and control logic do not blend.
+  const float signed_total_power_w = import_w > 0.0f ? import_w : -export_w;
+  if (online) {
+    const uint32_t now = millis();
+    if (!this->pv_grid_total_power_avg_valid_) {
+      this->pv_grid_total_power_avg_w_ = signed_total_power_w;
+      this->pv_grid_total_power_avg_valid_ = true;
+    } else {
+      const uint32_t elapsed_ms = now - this->pv_grid_total_power_avg_last_ms_;
+      const float alpha = static_cast<float>(elapsed_ms) /
+                          static_cast<float>(PV_SURPLUS_AVERAGE_WINDOW_MS + elapsed_ms);
+      this->pv_grid_total_power_avg_w_ += alpha * (signed_total_power_w - this->pv_grid_total_power_avg_w_);
+    }
+    this->pv_grid_total_power_avg_last_ms_ = now;
+  } else {
+    this->pv_grid_total_power_avg_valid_ = false;
+    this->pv_grid_total_power_avg_last_ms_ = 0;
+    this->pv_grid_total_power_avg_w_ = 0.0f;
+  }
   this->inputs_.grid_import_w = import_w;
   this->inputs_.grid_export_w = export_w;
-  this->inputs_.grid_total_power_w = import_w > 0.0f ? import_w : -export_w;
+  this->inputs_.grid_total_power_w = this->pv_grid_total_power_avg_valid_ ? this->pv_grid_total_power_avg_w_
+                                                                          : signed_total_power_w;
   this->inputs_.l1_current = l1_current;
   this->inputs_.l2_current = l2_current;
   this->inputs_.l3_current = l3_current;
