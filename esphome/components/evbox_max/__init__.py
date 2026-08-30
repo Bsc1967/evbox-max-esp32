@@ -78,6 +78,30 @@ CONF_GRID_PHASE_L1 = "grid_phase_l1"
 CONF_GRID_PHASE_L2 = "grid_phase_l2"
 CONF_GRID_PHASE_L3 = "grid_phase_l3"
 CONF_GRID_PHASE_MAPPING = "grid_phase_mapping"
+CONF_CHARGEBOX_1_SUMMARY = "chargebox_1_summary"
+CONF_CHARGEBOX_2_SUMMARY = "chargebox_2_summary"
+CONF_CHARGEBOX_3_SUMMARY = "chargebox_3_summary"
+CONF_CHARGEBOX_1_SERIAL = "chargebox_1_serial"
+CONF_CHARGEBOX_2_SERIAL = "chargebox_2_serial"
+CONF_CHARGEBOX_3_SERIAL = "chargebox_3_serial"
+CONF_CHARGEBOX_1_STATUS = "chargebox_1_status"
+CONF_CHARGEBOX_2_STATUS = "chargebox_2_status"
+CONF_CHARGEBOX_3_STATUS = "chargebox_3_status"
+CONF_CHARGEBOX_1_CABLE_STATUS = "chargebox_1_cable_status"
+CONF_CHARGEBOX_2_CABLE_STATUS = "chargebox_2_cable_status"
+CONF_CHARGEBOX_3_CABLE_STATUS = "chargebox_3_cable_status"
+CONF_CHARGEBOX_1_LOCK_STATUS = "chargebox_1_lock_status"
+CONF_CHARGEBOX_2_LOCK_STATUS = "chargebox_2_lock_status"
+CONF_CHARGEBOX_3_LOCK_STATUS = "chargebox_3_lock_status"
+CONF_CHARGEBOX_1_L1_VOLTAGE = "chargebox_1_l1_voltage"
+CONF_CHARGEBOX_2_L1_VOLTAGE = "chargebox_2_l1_voltage"
+CONF_CHARGEBOX_3_L1_VOLTAGE = "chargebox_3_l1_voltage"
+CONF_CHARGEBOX_1_L1_CURRENT = "chargebox_1_l1_current"
+CONF_CHARGEBOX_2_L1_CURRENT = "chargebox_2_l1_current"
+CONF_CHARGEBOX_3_L1_CURRENT = "chargebox_3_l1_current"
+CONF_CHARGEBOX_1_METER_VALUE = "chargebox_1_meter_value"
+CONF_CHARGEBOX_2_METER_VALUE = "chargebox_2_meter_value"
+CONF_CHARGEBOX_3_METER_VALUE = "chargebox_3_meter_value"
 
 
 def validate_remote_start_card(value):
@@ -327,6 +351,75 @@ CONFIG_SCHEMA = cv.Schema(
             device_class="temperature",
             state_class="measurement",
         ),
+        cv.Optional(CONF_CHARGEBOX_1_SUMMARY): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_2_SUMMARY): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_3_SUMMARY): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_1_SERIAL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_2_SERIAL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_3_SERIAL): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_1_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_2_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_3_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_1_CABLE_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_2_CABLE_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_3_CABLE_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_1_LOCK_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_2_LOCK_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_3_LOCK_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_CHARGEBOX_1_L1_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_2_L1_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_3_L1_VOLTAGE): sensor.sensor_schema(
+            unit_of_measurement="V",
+            accuracy_decimals=1,
+            device_class="voltage",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_1_L1_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_2_L1_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_3_L1_CURRENT): sensor.sensor_schema(
+            unit_of_measurement="A",
+            accuracy_decimals=1,
+            device_class="current",
+            state_class="measurement",
+        ),
+        cv.Optional(CONF_CHARGEBOX_1_METER_VALUE): sensor.sensor_schema(
+            unit_of_measurement="kWh",
+            accuracy_decimals=3,
+            device_class="energy",
+            state_class="total_increasing",
+        ),
+        cv.Optional(CONF_CHARGEBOX_2_METER_VALUE): sensor.sensor_schema(
+            unit_of_measurement="kWh",
+            accuracy_decimals=3,
+            device_class="energy",
+            state_class="total_increasing",
+        ),
+        cv.Optional(CONF_CHARGEBOX_3_METER_VALUE): sensor.sensor_schema(
+            unit_of_measurement="kWh",
+            accuracy_decimals=3,
+            device_class="energy",
+            state_class="total_increasing",
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
 
@@ -509,3 +602,41 @@ async def to_code(config):
     if CONF_TEMPERATURE in config:
         sens = await sensor.new_sensor(config[CONF_TEMPERATURE])
         cg.add(var.set_temperature_sensor(sens))
+
+    chargebox_text_sensors = [
+        (CONF_CHARGEBOX_1_SUMMARY, 0, var.set_chargebox_summary_text_sensor),
+        (CONF_CHARGEBOX_2_SUMMARY, 1, var.set_chargebox_summary_text_sensor),
+        (CONF_CHARGEBOX_3_SUMMARY, 2, var.set_chargebox_summary_text_sensor),
+        (CONF_CHARGEBOX_1_SERIAL, 0, var.set_chargebox_serial_text_sensor),
+        (CONF_CHARGEBOX_2_SERIAL, 1, var.set_chargebox_serial_text_sensor),
+        (CONF_CHARGEBOX_3_SERIAL, 2, var.set_chargebox_serial_text_sensor),
+        (CONF_CHARGEBOX_1_STATUS, 0, var.set_chargebox_status_text_sensor),
+        (CONF_CHARGEBOX_2_STATUS, 1, var.set_chargebox_status_text_sensor),
+        (CONF_CHARGEBOX_3_STATUS, 2, var.set_chargebox_status_text_sensor),
+        (CONF_CHARGEBOX_1_CABLE_STATUS, 0, var.set_chargebox_cable_status_text_sensor),
+        (CONF_CHARGEBOX_2_CABLE_STATUS, 1, var.set_chargebox_cable_status_text_sensor),
+        (CONF_CHARGEBOX_3_CABLE_STATUS, 2, var.set_chargebox_cable_status_text_sensor),
+        (CONF_CHARGEBOX_1_LOCK_STATUS, 0, var.set_chargebox_lock_status_text_sensor),
+        (CONF_CHARGEBOX_2_LOCK_STATUS, 1, var.set_chargebox_lock_status_text_sensor),
+        (CONF_CHARGEBOX_3_LOCK_STATUS, 2, var.set_chargebox_lock_status_text_sensor),
+    ]
+    for key, index, setter in chargebox_text_sensors:
+        if key in config:
+            sens = await text_sensor.new_text_sensor(config[key])
+            cg.add(setter(index, sens))
+
+    chargebox_number_sensors = [
+        (CONF_CHARGEBOX_1_L1_VOLTAGE, 0, var.set_chargebox_l1_voltage_sensor),
+        (CONF_CHARGEBOX_2_L1_VOLTAGE, 1, var.set_chargebox_l1_voltage_sensor),
+        (CONF_CHARGEBOX_3_L1_VOLTAGE, 2, var.set_chargebox_l1_voltage_sensor),
+        (CONF_CHARGEBOX_1_L1_CURRENT, 0, var.set_chargebox_l1_current_sensor),
+        (CONF_CHARGEBOX_2_L1_CURRENT, 1, var.set_chargebox_l1_current_sensor),
+        (CONF_CHARGEBOX_3_L1_CURRENT, 2, var.set_chargebox_l1_current_sensor),
+        (CONF_CHARGEBOX_1_METER_VALUE, 0, var.set_chargebox_meter_value_sensor),
+        (CONF_CHARGEBOX_2_METER_VALUE, 1, var.set_chargebox_meter_value_sensor),
+        (CONF_CHARGEBOX_3_METER_VALUE, 2, var.set_chargebox_meter_value_sensor),
+    ]
+    for key, index, setter in chargebox_number_sensors:
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(setter(index, sens))

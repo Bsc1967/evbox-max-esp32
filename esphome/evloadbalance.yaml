@@ -181,6 +181,58 @@ evbox_max:
   temperature:
     name: EVBox Temperature
 
+  # v0.3 multi-EVBox bus diagnostics
+  chargebox_1_summary:
+    name: EVBox 1 Summary
+  chargebox_1_serial:
+    name: EVBox 1 Serial
+  chargebox_1_status:
+    name: EVBox 1 Status
+  chargebox_1_cable_status:
+    name: EVBox 1 Cable Status
+  chargebox_1_lock_status:
+    name: EVBox 1 Lock Status
+  chargebox_1_l1_voltage:
+    name: EVBox 1 L1 Voltage
+  chargebox_1_l1_current:
+    name: EVBox 1 L1 Current
+  chargebox_1_meter_value:
+    name: EVBox 1 Meter Value
+
+  chargebox_2_summary:
+    name: EVBox 2 Summary
+  chargebox_2_serial:
+    name: EVBox 2 Serial
+  chargebox_2_status:
+    name: EVBox 2 Status
+  chargebox_2_cable_status:
+    name: EVBox 2 Cable Status
+  chargebox_2_lock_status:
+    name: EVBox 2 Lock Status
+  chargebox_2_l1_voltage:
+    name: EVBox 2 L1 Voltage
+  chargebox_2_l1_current:
+    name: EVBox 2 L1 Current
+  chargebox_2_meter_value:
+    name: EVBox 2 Meter Value
+
+  chargebox_3_summary:
+    name: EVBox 3 Summary
+  chargebox_3_serial:
+    name: EVBox 3 Serial
+  chargebox_3_status:
+    name: EVBox 3 Status
+  chargebox_3_cable_status:
+    name: EVBox 3 Cable Status
+  chargebox_3_lock_status:
+    name: EVBox 3 Lock Status
+  chargebox_3_l1_voltage:
+    name: EVBox 3 L1 Voltage
+  chargebox_3_l1_current:
+    name: EVBox 3 L1 Current
+  chargebox_3_meter_value:
+    name: EVBox 3 Meter Value
+
 janitza_umg604:
   id: janitza
   evbox_max_id: evbox

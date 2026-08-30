@@ -774,6 +774,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         ESP_LOGI(TAG,
                  "CB cmd26 decode: byte0 status=0x%02X %s byte3 is_charging=%u byte4 led=0x%02X byte5 lock=%u byte6 cable=%uA",
                  code, this->cb_status_name_(code), is_charging, led_colour, lock_state, cable_current);
+        this->update_chargebox_slot_from_state_(frame.src, frame.data);
         this->cb_is_charging_ = is_charging;
         this->cb_led_colour_ = led_colour;
         this->cb_lock_state_ = lock_state;
@@ -1129,6 +1130,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
     case FrameType::METER_PUSH:
       if (frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
         ESP_LOGD(TAG, "CB meter push data=%s", frame.data.c_str());
+        this->update_chargebox_slot_from_meter_push_(frame.src, frame.data);
         this->update_meter_from_push_(frame.data);
         this->send_packet_(frame.src, 0x66, "");
       }
@@ -1852,6 +1854,7 @@ void EvboxMaxComponent::handle_secondary_frame_(const Frame &frame) {
       break;
     }
     case FrameType::STATE_UPDATE: {
+      this->update_chargebox_slot_from_state_(address, frame.data);
       const uint8_t code = parse_hex_byte(frame.data, 0);
       const uint8_t is_charging = parse_hex_byte(frame.data, 6);
       const uint8_t lock_state = parse_hex_byte(frame.data, 10);
@@ -1874,11 +1877,92 @@ void EvboxMaxComponent::handle_secondary_frame_(const Frame &frame) {
       break;
     case FrameType::METER_PUSH:
       ESP_LOGD(TAG, "Secondary CB 0x%02X meter push data=%s", address, frame.data.c_str());
+      this->update_chargebox_slot_from_meter_push_(address, frame.data);
       this->send_packet_(address, 0x66, "");
       break;
     default:
       ESP_LOGD(TAG, "Secondary CB 0x%02X frame cmd=0x%02X ignored in passive mode", address, frame.cmd);
       break;
+  }
+}
+
+void EvboxMaxComponent::update_chargebox_slot_from_state_(uint8_t address, const std::string &data) {
+  auto *slot = this->ensure_chargebox_slot_(address);
+  if (slot == nullptr || data.size() < 14) return;
+
+  slot->last_seen_ms = millis();
+  slot->status_code = parse_hex_byte(data, 0);
+  slot->have_status = true;
+  slot->is_charging = parse_hex_byte(data, 6);
+  slot->lock_state = parse_hex_byte(data, 10);
+  slot->cable_current = parse_hex_byte(data, 12);
+
+  if (data.size() >= 132) {
+    slot->l1_voltage_v = static_cast<float>(parse_hex_uint(data, 68, 4));
+    slot->l1_current_a = static_cast<float>(parse_hex_uint(data, 80, 4)) / 100.0f;
+    const uint32_t raw_meter = parse_hex_uint(data, 18, 8);
+    if (raw_meter > 0) {
+      slot->raw_meter_wh = static_cast<float>(raw_meter);
+      slot->meter_kwh = static_cast<float>(raw_meter) / 1000.0f;
+    }
+  }
+}
+
+void EvboxMaxComponent::update_chargebox_slot_from_meter_push_(uint8_t address, const std::string &data) {
+  auto *slot = this->ensure_chargebox_slot_(address);
+  if (slot == nullptr || data.size() < 44) return;
+
+  slot->last_seen_ms = millis();
+  slot->l1_voltage_v = static_cast<float>(parse_hex_uint(data, 0, 4));
+  slot->l1_current_a = static_cast<float>(parse_hex_uint(data, 12, 4)) / 100.0f;
+  const uint32_t raw_meter = parse_hex_uint(data, 36, 8);
+  if (raw_meter > 0) {
+    slot->raw_meter_wh = static_cast<float>(raw_meter);
+    slot->meter_kwh = static_cast<float>(raw_meter) / 1000.0f;
+  }
+}
+
+void EvboxMaxComponent::publish_chargebox_slots_() {
+  const uint32_t now = millis();
+  for (uint8_t index = 0; index < MAX_CHARGEBOXES; index++) {
+    const auto &slot = this->chargeboxes_[index];
+    const bool online = slot.assigned && slot.last_seen_ms != 0 && now - slot.last_seen_ms <= this->watchdog_timeout_ms_;
+    const std::string serial = slot.serial.empty() ? "UNKNOWN" : slot.serial;
+    const std::string status = slot.have_status ? std::string(this->cb_status_name_(slot.status_code)) + " 0x" +
+                                                      hex_byte(slot.status_code)
+                                                : "NO_STATUS";
+    const std::string cable = slot.cable_current > 0 ? "CONNECTED" : "UNPLUGGED";
+    const std::string lock = slot.lock_state != 0 ? "LOCKED" : "UNLOCKED";
+    const std::string summary = slot.assigned
+                                    ? std::string(slot.address == this->chargebox_address_ ? "PRIMARY" : "SECONDARY") +
+                                          " addr=0x" + hex_byte(slot.address) + " " + serial + " " + status +
+                                          " cable=" + cable + " lock=" + lock + (online ? " online" : " stale")
+                                    : "EMPTY";
+
+    if (this->chargebox_summary_text_sensors_[index] != nullptr) {
+      this->chargebox_summary_text_sensors_[index]->publish_state(summary);
+    }
+    if (this->chargebox_serial_text_sensors_[index] != nullptr) {
+      this->chargebox_serial_text_sensors_[index]->publish_state(slot.assigned ? serial : "EMPTY");
+    }
+    if (this->chargebox_status_text_sensors_[index] != nullptr) {
+      this->chargebox_status_text_sensors_[index]->publish_state(slot.assigned ? status : "EMPTY");
+    }
+    if (this->chargebox_cable_status_text_sensors_[index] != nullptr) {
+      this->chargebox_cable_status_text_sensors_[index]->publish_state(slot.assigned ? cable : "EMPTY");
+    }
+    if (this->chargebox_lock_status_text_sensors_[index] != nullptr) {
+      this->chargebox_lock_status_text_sensors_[index]->publish_state(slot.assigned ? lock : "EMPTY");
+    }
+    if (slot.assigned && this->chargebox_l1_voltage_sensors_[index] != nullptr && !std::isnan(slot.l1_voltage_v)) {
+      this->chargebox_l1_voltage_sensors_[index]->publish_state(slot.l1_voltage_v);
+    }
+    if (slot.assigned && this->chargebox_l1_current_sensors_[index] != nullptr) {
+      this->chargebox_l1_current_sensors_[index]->publish_state(slot.l1_current_a);
+    }
+    if (slot.assigned && this->chargebox_meter_value_sensors_[index] != nullptr && !std::isnan(slot.meter_kwh)) {
+      this->chargebox_meter_value_sensors_[index]->publish_state(slot.meter_kwh);
+    }
   }
 }
 
@@ -2364,6 +2448,7 @@ void EvboxMaxComponent::publish_() {
   if (this->temperature_sensor_ != nullptr && !std::isnan(this->temperature_c_)) {
     this->temperature_sensor_->publish_state(this->temperature_c_);
   }
+  this->publish_chargebox_slots_();
 }
 
 const char *EvboxMaxComponent::state_name_() const {
