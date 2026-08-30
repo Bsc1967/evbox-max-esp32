@@ -1,0 +1,67 @@
+# evbox_max
+
+ESPHome external component for controlling an EVBox ChargeBox over the EVBox
+MAX RS485 protocol.
+
+## Responsibilities
+
+- UART transport at 38400 8N1
+- Optional MAX3485 driver-enable pin for half-duplex RS485
+- EVBox ASCII frame encoding and parsing
+- ASCII checksum plus XOR parity validation
+- ChargeBox G2 registration/autodetect hook
+- Address assignment hook
+- Information/configuration read flow
+- Heartbeat
+- Local state machine
+- Charge-current setpoint generation
+- Session start/stop hooks
+- Communication watchdog and fault transition
+- Manual, load-balancing, PV-surplus, and disabled control modes
+- Configurable charge phase count for PV surplus and load-balancing current
+  calculations
+
+## State Machine
+
+```text
+BOOT
+WAIT_REGISTRATION
+ASSIGN_ADDRESS
+READ_INFO
+READ_CONFIG
+IDLE
+AUTHORIZED
+STARTING
+CHARGING
+PAUSED
+FINISHING
+FAULT
+```
+
+## Protocol Boundary
+
+The protocol code is isolated in:
+
+- `protocol.h`
+- `protocol.cpp`
+
+Charge-current decisions are isolated in:
+
+- `controller.h`
+- `controller.cpp`
+
+The ESPHome component lifecycle and Home Assistant sensors are isolated in:
+
+- `evbox_max.h`
+- `evbox_max.cpp`
+
+Home Assistant controls are isolated in:
+
+- `number.py`, `select.py`, `switch.py`
+- `entities.h`, `entities.cpp`
+
+## Validation Work Still Required
+
+The component now follows the frame format used by the local EVBox test app:
+`0x02 + ASCII payload + ASCII checksum + ASCII XOR parity + 0x03`, with an
+optional trailing `0xFE` ignored by the parser.

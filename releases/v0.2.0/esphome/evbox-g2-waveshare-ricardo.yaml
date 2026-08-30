@@ -1,0 +1,2354 @@
+substitutions:
+  device_name: evloadbalance-waveshare
+  friendly_name: EV LoadBalance WaveShare
+  grid_power_sensor_entity_id: sensor.your_grid_power_sensor
+  energy_price_sensor_entity_id: sensor.your_current_electricity_tariff
+  timezone: Europe/Amsterdam
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: ${timezone}
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: Waveshare ESP32-S3-Relay-6CH EVBox G2 Chargepoint + Debug
+
+  on_boot:
+    priority: -100
+    then:
+      - delay: 2s
+
+      - lambda: |-
+          id(charging_status).publish_state("Booting CP init sequence");
+
+          // Charging mode status herstellen op basis van global charging_mode
+          if (id(charging_mode) == 0) {
+            id(evbox_charging_mode_status).publish_state("Off");
+          } else if (id(charging_mode) == 1) {
+            id(evbox_charging_mode_status).publish_state("Manual");
+          } else if (id(charging_mode) == 2) {
+            id(evbox_charging_mode_status).publish_state("Auto");
+          } else if (id(charging_mode) == 3) {
+            id(evbox_charging_mode_status).publish_state("Solar Surplus");
+          } else {
+            id(evbox_charging_mode_status).publish_state("Unknown");
+          }
+
+          // Diagnose/defaults direct zichtbaar maken na reboot/flash
+          id(evbox_debug).publish_state("Booting - waiting for EVBox communication");
+          id(evbox_detected_generation).publish_state("Unknown");
+          id(evbox_config_raw).publish_state("Waiting for command 33 response");
+          id(evbox_meter_type).publish_state("Unknown");
+          id(evbox_auto_start_config).publish_state("Unknown");
+          id(evbox_remote_start_config).publish_state("Unknown");
+          id(evbox_config_profile).publish_state("Unknown");
+          id(evbox_current_rfid).publish_state("None");
+          id(evbox_session_rfid).publish_state("None");
+
+          if (id(last_rfid_id).empty()) {
+            id(evbox_last_rfid).publish_state("None");
+          } else {
+            id(evbox_last_rfid).publish_state(id(last_rfid_id));
+          }
+
+          id(evbox_communication_ok).publish_state(false);
+          id(evbox_is_charging).publish_state(false);
+          id(evbox_locked).publish_state(false);
+          id(evbox_session_active).publish_state(false);
+
+      # 1. CP vraagt ChargeBox om opnieuw te registreren
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1E", "");
+          send_frame("01", "80", "1E", "");
+          id(evbox_debug).publish_state("Boot: sent restart registration 1E broadcast and direct");
+
+      - delay: 2s
+
+      # 2. CP/backend connected / connection state changed
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1B", "");
+          id(evbox_debug).publish_state("Boot: sent connection state 1B broadcast");
+
+      - delay: 500ms
+
+      # 3. Ook direct naar huidig bekende adres proberen
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "1B", "");
+          id(evbox_debug).publish_state("Boot: sent connection state 1B direct");
+
+      - delay: 500ms
+
+      # 4. LED-ring aan
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1C", "01");
+          id(evbox_debug).publish_state("Boot: sent LED enable 1C");
+
+      - delay: 500ms
+
+      # 5. State update opvragen
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "18", "02");
+          id(evbox_debug).publish_state("Boot: requested state update 18 02");
+
+      - delay: 5s
+
+      # Late recovery-init na OTA/flash/restart.
+      # Nodig omdat de ChargeBox zelf niet reboot wanneer de ESP opnieuw start.
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1E", "");
+          send_frame(id(cb_address), "80", "1E", "");
+          id(evbox_debug).publish_state("Late boot: restart registration 1E broadcast and direct");
+
+      - delay: 1s
+
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1B", "");
+          send_frame(id(cb_address), "80", "1B", "");
+          id(evbox_debug).publish_state("Late boot: connection state 1B broadcast and direct");
+
+      - delay: 1s
+
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "18", "02");
+          //id(delayed_get_configuration).execute();
+          id(evbox_debug).publish_state("Late boot: requested state update and scheduled configuration");
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: "evloadbalance"
+
+captive_portal:
+
+globals:
+  - id: cb_address
+    type: std::string
+    restore_value: no
+    initial_value: '"01"'
+
+  - id: start_sent
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # 0 = Off, 1 = Errors only, 2 = Important, 3 = Verbose
+  - id: debug_mode
+    type: int
+    restore_value: yes
+    initial_value: '2'
+
+  # 0 seconden = alles publiceren naar Home Assistant
+  - id: debug_interval_seconds
+    type: int
+    restore_value: yes
+    initial_value: '30'
+
+  - id: last_debug_publish_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: detected_generation
+    type: std::string
+    restore_value: no
+    initial_value: '"Unknown"'
+
+  - id: last_meter_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: last_meter_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: has_last_meter
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: last_valid_rx_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: charging_mode
+    type: int
+    restore_value: yes
+    initial_value: '1'
+
+  - id: last_sent_current_tenths
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: session_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: session_start_meter_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: session_energy_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: session_solar_surplus_energy_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: session_grid_energy_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: session_last_update_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: has_session_start_meter
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: current_session_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: session_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: solar_import_over_limit_since_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: solar_stopped_by_surplus_control
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: session_cost_eur
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: session_last_cost_meter_kwh
+    type: float
+    restore_value: no
+    initial_value: '0.0'
+
+  - id: has_session_last_cost_meter
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: manual_start_requested
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: current_rfid_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: last_rfid_id
+    type: std::string
+    restore_value: yes
+    initial_value: '""'    
+
+# ==================== UART / RS485 ====================
+uart:
+  id: uart_evbox
+  baud_rate: 38400
+  parity: NONE
+  stop_bits: 1
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  rx_buffer_size: 512
+
+  # Voor de onboard Waveshare RS485 meestal niet nodig.
+  # Alleen gebruiken als je RS485-module direction control vereist.
+
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      timeout: 100ms
+    sequence:
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          auto publish_debug = [&](std::string msg, int level = 2) {
+            ESP_LOGD("evbox", "%s", msg.c_str());
+
+            if (id(debug_mode) <= 0) {
+              return;
+            }
+
+            if (id(debug_mode) < level) {
+              return;
+            }
+
+            uint32_t now = millis();
+            uint32_t interval_ms = id(debug_interval_seconds) * 1000UL;
+
+            if (id(debug_interval_seconds) == 0 || now - id(last_debug_publish_ms) >= interval_ms) {
+              id(evbox_debug).publish_state(msg);
+              id(last_debug_publish_ms) = now;
+            }
+          };
+
+          auto hex_to_uint32 = [&](const std::string &hex) -> uint32_t {
+            return strtoul(hex.c_str(), nullptr, 16);
+          };
+
+          auto hex_to_uint16 = [&](const std::string &hex) -> uint16_t {
+            return strtoul(hex.c_str(), nullptr, 16);
+          };
+
+          auto has_range = [&](const std::string &s, size_t start, size_t length) -> bool {
+            return s.size() >= start + length;
+          };
+
+          if (bytes.size() < 13) {
+            return;
+          }
+
+          int stx = -1;
+          int etx = -1;
+
+          for (size_t i = 0; i < bytes.size(); i++) {
+            if (bytes[i] == 0x02) {
+              stx = i;
+              break;
+            }
+          }
+
+          if (stx < 0) {
+            return;
+          }
+
+          for (size_t i = stx + 1; i < bytes.size(); i++) {
+            if (bytes[i] == 0x03) {
+              etx = i;
+              break;
+            }
+          }
+
+          if (etx < 0 || etx - stx < 7) {
+            return;
+          }
+
+          int payload_start = stx + 1;
+          int payload_end = etx - 4;
+
+          if (payload_end <= payload_start) {
+            return;
+          }
+
+          std::string payload;
+          for (int i = payload_start; i < payload_end; i++) {
+            payload.push_back((char) bytes[i]);
+          }
+
+          if (payload.size() < 6) {
+            return;
+          }
+
+          uint8_t checksum = 0;
+          uint8_t parity = 0;
+          for (char c : payload) {
+            checksum = (checksum + (uint8_t)c) & 0xFF;
+            parity ^= (uint8_t)c;
+          }
+
+          char cs_expected[3];
+          char pr_expected[3];
+          snprintf(cs_expected, sizeof(cs_expected), "%02X", checksum);
+          snprintf(pr_expected, sizeof(pr_expected), "%02X", parity);
+
+          std::string cs_rx;
+          std::string pr_rx;
+          cs_rx.push_back((char) bytes[etx - 4]);
+          cs_rx.push_back((char) bytes[etx - 3]);
+          pr_rx.push_back((char) bytes[etx - 2]);
+          pr_rx.push_back((char) bytes[etx - 1]);
+
+          if (cs_rx != std::string(cs_expected) || pr_rx != std::string(pr_expected)) {
+            publish_debug("RX invalid checksum/parity | payload=" + payload, 1);
+            return;
+          }
+
+          id(last_valid_rx_ms) = millis();
+          id(evbox_communication_ok).publish_state(true);
+
+          std::string dst = payload.substr(0, 2);
+          std::string src = payload.substr(2, 2);
+          std::string cmd = payload.substr(4, 2);
+          std::string data = payload.substr(6);
+
+          std::string msg = "RX dst=" + dst + " src=" + src + " cmd=" + cmd + " data=" + data;
+          publish_debug(msg, 3);
+
+          if (dst != "80") {
+            return;
+          }
+
+          // Command 11: ChargeBox registreert zich
+          if (cmd == "11") {
+            if (data.size() >= 14) {
+              std::string serial = data.substr(0, 7);
+              id(cb_address) = "01";
+
+              send_frame("BC", "80", "11", serial + id(cb_address) + "03");
+
+              id(charging_status).publish_state("Registered CB " + serial);
+              id(evbox_detected_generation).publish_state("Registered");
+              publish_debug("Registered ChargeBox serial=" + serial + " as address " + id(cb_address), 2);
+
+              // CP/backend connected broadcast
+             send_frame("BC", "80", "1B", "");
+             send_frame(id(cb_address), "80", "1B", "");
+             send_frame(id(cb_address), "80", "18", "02");
+
+             id(delayed_get_configuration).execute();
+             publish_debug("Scheduled delayed get configuration after registration", 2);
+            }
+            return;
+          }
+
+          id(cb_address) = src;
+
+          // Command 21: Heartbeat
+          if (cmd == "21") {
+            send_frame(src, "80", "21", "");
+            publish_debug("Heartbeat OK from " + src, 3);
+            return;
+          }
+
+          // Command 22: Authorize card / autostart
+          if (cmd == "22") {
+            std::string rfid_id = data;
+
+            if (data.size() > 2) {
+              rfid_id = data.substr(2);
+            }
+
+            bool is_auto_start_card = rfid_id.find("000000AS") != std::string::npos;
+
+            id(current_rfid_id) = rfid_id;
+            id(last_rfid_id) = rfid_id;
+
+            id(evbox_current_rfid).publish_state(rfid_id);
+            id(evbox_last_rfid).publish_state(rfid_id);
+
+            bool authorization_allowed = id(charging_mode) != 0;
+
+            if (authorization_allowed) {
+              std::string response = "01";
+              if (data.size() >= 2) {
+                response += data.substr(2);
+              }
+              response += "FFFF";
+
+              send_frame(src, "80", "22", response);
+              id(evbox_charging_mode_status).publish_state(is_auto_start_card ? "Authorization granted - auto card" : "Authorization granted - RFID");
+              id(charging_status).publish_state("Authorization granted");
+              publish_debug(is_auto_start_card ? "Autostart card accepted" : "RFID accepted", 2);
+            } else {
+              std::string response = "12";
+              if (data.size() >= 2) {
+                response += data.substr(2);
+              }
+              response += "FFFF";
+
+              send_frame(src, "80", "22", response);
+              id(evbox_charging_mode_status).publish_state("No");
+              id(charging_status).publish_state("Authorization denied - charging mode Off");
+              publish_debug("Authorization denied because charging mode is Off", 2);
+            }
+            return;
+          }
+
+          if (cmd == "23") {
+            send_frame(src, "80", "23", "010000000000000000");
+
+            id(start_sent) = true;
+            id(session_active) = true;
+            id(evbox_session_rfid).publish_state(id(current_rfid_id));
+            id(has_session_start_meter) = false;
+            id(session_energy_kwh) = 0.0f;
+            id(session_solar_surplus_energy_kwh) = 0.0f;
+            id(session_grid_energy_kwh) = 0.0f;
+            id(session_last_update_ms) = millis();
+            id(session_start_ms) = millis();
+
+            id(session_cost_eur) = 0.0f;
+            id(session_last_cost_meter_kwh) = 0.0f;
+            id(has_session_last_cost_meter) = false;
+
+            id(evbox_session_cost).publish_state(0.0f);
+            id(evbox_session_average_price).publish_state(0.0f);
+
+            auto now = id(ha_time).now();
+            char session_id[32];
+
+            if (now.is_valid()) {
+              snprintf(
+                session_id,
+                sizeof(session_id),
+                "%04d%02d%02d-%02d%02d%02d",
+                now.year,
+                now.month,
+                now.day_of_month,
+                now.hour,
+                now.minute,
+                now.second
+              );
+
+              char start_time[32];
+              snprintf(
+                start_time,
+                sizeof(start_time),
+                "%04d-%02d-%02d %02d:%02d:%02d",
+                now.year,
+                now.month,
+                now.day_of_month,
+                now.hour,
+                now.minute,
+                now.second
+              );
+
+              id(current_session_id) = std::string(session_id);
+              id(evbox_current_session_id).publish_state(id(current_session_id));
+              id(evbox_session_start_time).publish_state(std::string(start_time));
+            } else {
+              id(current_session_id) = "unknown";
+              id(evbox_current_session_id).publish_state("unknown");
+            }
+
+            id(evbox_session_active).publish_state(true);
+            id(evbox_session_energy).publish_state(0.0f);
+            id(evbox_session_solar_surplus_energy).publish_state(0.0f);
+            id(evbox_session_grid_energy).publish_state(0.0f);
+            id(evbox_session_solar_surplus_share).publish_state(0.0f);
+
+            id(charging_status).publish_state("Metering started");
+            id(evbox_is_charging).publish_state(true);
+            publish_debug("Metering started - session tracking started", 2);
+            return;
+          }
+
+          // Command 24: Metering end
+          if (cmd == "24") {
+            send_frame(src, "80", "24", "01");
+            id(start_sent) = false;
+            id(charging_status).publish_state("Metering ended");
+            id(evbox_is_charging).publish_state(false);
+            auto now = id(ha_time).now();
+
+            if (now.is_valid()) {
+              char end_time[32];
+              snprintf(
+                end_time,
+                sizeof(end_time),
+                "%04d-%02d-%02d %02d:%02d:%02d",
+                now.year,
+                now.month,
+                now.day_of_month,
+                now.hour,
+                now.minute,
+                now.second
+              );
+
+              id(evbox_last_session_end_time).publish_state(std::string(end_time));
+            }
+
+            id(session_active) = false;
+            id(evbox_session_active).publish_state(false);
+
+            id(evbox_last_session_id).publish_state(id(current_session_id));
+            id(evbox_last_session_energy).publish_state(id(session_energy_kwh));
+            id(evbox_last_session_solar_surplus_energy).publish_state(id(session_solar_surplus_energy_kwh));
+
+            if (id(session_energy_kwh) > 0.01f) {
+              float solar_share = (id(session_solar_surplus_energy_kwh) / id(session_energy_kwh)) * 100.0f;
+              if (solar_share < 0.0f) solar_share = 0.0f;
+              if (solar_share > 100.0f) solar_share = 100.0f;
+              id(evbox_last_session_solar_surplus_share).publish_state(solar_share);
+            }
+
+            id(evbox_last_session_end_reason).publish_state("Metering ended");
+            id(evbox_last_session_cost).publish_state(id(session_cost_eur));
+            publish_debug("Metering ended", 2);
+            id(manual_start_requested) = false;
+            return;
+          }
+
+          // Command 26: CB state update
+          if (cmd == "26") {
+            char len_msg[100];
+
+            // Let op: data.size() is aantal ASCII-hex tekens.
+            // Bij jouw G2 is command 26 payload 68 hex chars, dus dat is G2-like.
+            if (data.size() >= 264) {
+              id(detected_generation) = "G3/G4-like";
+            } else if (data.size() >= 68) {
+              id(detected_generation) = "G2-like";
+            } else {
+              id(detected_generation) = "Short/unknown";
+            }
+
+            id(evbox_detected_generation).publish_state(id(detected_generation));
+
+            snprintf(len_msg, sizeof(len_msg), "Command 26 payload length: %u chars, detected: %s", (unsigned int) data.size(), id(detected_generation).c_str());
+            publish_debug(std::string(len_msg), 3);
+
+            std::string state = "??";
+
+            if (has_range(data, 0, 2)) {
+              state = data.substr(0, 2);
+              std::string g2_substate = has_range(data, 2, 2) ? data.substr(2, 2) : "??";
+              std::string g2_detail = has_range(data, 4, 2) ? data.substr(4, 2) : "??";
+
+              if (state == "02") {
+                if (g2_substate == "1A" || g2_detail == "0B") {
+                  id(charging_status).publish_state("G2 authorized / cable locked");
+                  publish_debug("G2 state 02 with substate " + g2_substate + " detail " + g2_detail + " - authorized/locked", 2);
+                } else {
+                  id(charging_status).publish_state("Available");
+                  id(evbox_is_charging).publish_state(false);
+                  id(start_sent) = false;
+                  publish_debug("State: Available", 2);
+                }
+              } else if (state == "17") {
+                id(charging_status).publish_state("In use / plugged");
+                publish_debug("State: In use / plugged", 2);
+              } else if (state == "07") {
+                id(charging_status).publish_state("Unknown / G2 state 07");
+                publish_debug("State: Unknown / G2 state 07", 2);
+              } else if (state == "47") {
+                id(charging_status).publish_state("Preparing");
+                publish_debug("State: Preparing", 2);
+              } else if (state == "4A") {
+                id(charging_status).publish_state("Ready");
+                publish_debug("State: Ready", 2);
+              } else if (state == "48") {
+                id(charging_status).publish_state("Charging");
+                id(evbox_is_charging).publish_state(true);
+                publish_debug("State: Charging", 2);
+              } else if (state == "4B") {
+                id(charging_status).publish_state("Finished - EV still plugged in");
+                id(evbox_is_charging).publish_state(false);
+                id(start_sent) = false;
+                publish_debug("State: Finished - EV still plugged in", 2);
+              } else if (state == "0A") {
+                id(charging_status).publish_state("Error");
+                id(evbox_is_charging).publish_state(false);
+                id(start_sent) = false;
+                publish_debug("State: Error", 1);
+              } else {
+                id(charging_status).publish_state("State " + state);
+                publish_debug("Unknown CB state " + state, 2);
+              }
+            }
+
+            if (has_range(data, 2, 2)) {
+              std::string charging_flag = data.substr(2, 2);
+              if (charging_flag == "01") {
+                id(evbox_is_charging).publish_state(true);
+              } else if (charging_flag == "00") {
+                id(evbox_is_charging).publish_state(false);
+              }
+            }
+
+            if (has_range(data, 4, 2)) {
+              std::string locked_flag = data.substr(4, 2);
+              if (locked_flag == "01") {
+                id(evbox_locked).publish_state(true);
+              } else if (locked_flag == "00") {
+                id(evbox_locked).publish_state(false);
+              }
+            }
+
+            if (has_range(data, 12, 2)) {
+              uint16_t cable_current_raw = hex_to_uint16(data.substr(12, 2));
+              id(evbox_cable_max_current).publish_state((float) cable_current_raw);
+            }
+
+            if (has_range(data, 18, 8)) {
+              uint32_t meter_raw = hex_to_uint32(data.substr(18, 8));
+              float meter_kwh = meter_raw / 1000.0f;
+
+              id(evbox_meter_total).publish_state(meter_kwh);
+
+              if (id(session_active)) {
+                if (!id(has_session_start_meter)) {
+                  id(session_start_meter_kwh) = meter_kwh;
+                  id(has_session_start_meter) = true;
+                  id(evbox_session_energy).publish_state(0.0f);
+                  id(session_last_cost_meter_kwh) = meter_kwh;
+                  id(has_session_last_cost_meter) = true;
+                } else {
+                  float session_energy = meter_kwh - id(session_start_meter_kwh);
+
+                  if (session_energy >= 0.0f) {
+                    id(session_energy_kwh) = session_energy;
+                    id(evbox_session_energy).publish_state(session_energy);
+                    // Sessie-kosten op basis van meter-delta × actuele energieprijs.
+                    // Dit houdt rekening met prijswijzigingen tijdens de sessie.
+                    if (!id(has_session_last_cost_meter)) {
+                      id(session_last_cost_meter_kwh) = meter_kwh;
+                      id(has_session_last_cost_meter) = true;
+                    } else {
+                      float delta_cost_kwh = meter_kwh - id(session_last_cost_meter_kwh);
+
+                      if (delta_cost_kwh >= 0.0f && delta_cost_kwh < 10.0f) {
+                        if (!isnan(id(evbox_energy_price_input).state)) {
+                          float price_eur_per_kwh = id(evbox_energy_price_input).state;
+
+                          float delta_cost_eur = delta_cost_kwh * price_eur_per_kwh;
+
+                          id(session_cost_eur) += delta_cost_eur;
+                          id(session_last_cost_meter_kwh) = meter_kwh;
+
+                          id(evbox_session_cost).publish_state(id(session_cost_eur));
+
+                          if (id(session_energy_kwh) > 0.001f) {
+                            float avg_price = id(session_cost_eur) / id(session_energy_kwh);
+                            id(evbox_session_average_price).publish_state(avg_price);
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+
+                uint32_t now_ms = millis();
+
+                if (id(session_last_update_ms) > 0 && now_ms > id(session_last_update_ms)) {
+                  float delta_hours = (now_ms - id(session_last_update_ms)) / 3600000.0f;
+
+                  if (!isnan(id(evbox_estimated_power).state) && delta_hours > 0.0f) {
+                    float charge_power_kw = id(evbox_estimated_power).state;
+
+                    if (charge_power_kw >= 0.0f && charge_power_kw < 30.0f) {
+                      float grid_power_w = id(evbox_grid_power_input).state;
+                      float solar_available_kw = 0.0f;
+
+                      if (!isnan(grid_power_w) && grid_power_w < 0.0f) {
+                        solar_available_kw = (-grid_power_w) / 1000.0f;
+                      }
+
+                      float solar_part_kw = std::min(charge_power_kw, solar_available_kw);
+                      float grid_part_kw = charge_power_kw - solar_part_kw;
+
+                      if (solar_part_kw < 0.0f) solar_part_kw = 0.0f;
+                      if (grid_part_kw < 0.0f) grid_part_kw = 0.0f;
+
+                      id(session_solar_surplus_energy_kwh) += solar_part_kw * delta_hours;
+                      id(session_grid_energy_kwh) += grid_part_kw * delta_hours;
+
+                      id(evbox_session_solar_surplus_energy).publish_state(id(session_solar_surplus_energy_kwh));
+                      id(evbox_session_grid_energy).publish_state(id(session_grid_energy_kwh));
+
+                      if (id(session_energy_kwh) > 0.01f) {
+                        float solar_share = (id(session_solar_surplus_energy_kwh) / id(session_energy_kwh)) * 100.0f;
+                        if (solar_share < 0.0f) solar_share = 0.0f;
+                        if (solar_share > 100.0f) solar_share = 100.0f;
+
+                        id(evbox_session_solar_surplus_share).publish_state(solar_share);
+                      }
+                    }
+                  }
+                }
+
+                id(session_last_update_ms) = now_ms;
+
+                if (id(session_start_ms) > 0) {
+                  uint32_t duration_min = (millis() - id(session_start_ms)) / 60000UL;
+                  id(evbox_session_duration).publish_state((float) duration_min);
+                }
+              }
+
+              uint32_t now = millis();
+
+              if (id(has_last_meter)) {
+                float delta_kwh = meter_kwh - id(last_meter_kwh);
+                float delta_hours = (now - id(last_meter_ms)) / 3600000.0f;
+
+                if (delta_kwh >= 0 && delta_hours > 0) {
+                  float power_kw = delta_kwh / delta_hours;
+
+                  if (power_kw >= 0.0f && power_kw <= 30.0f) {
+                    id(evbox_estimated_power).publish_state(power_kw);
+                    float phases = id(evbox_solar_charging_phases).state;
+                    if (phases < 1.0f) phases = 1.0f;
+                    if (phases > 3.0f) phases = 3.0f;
+
+                    float estimated_current_a = (power_kw * 1000.0f) / (230.0f * phases);
+
+                    if (estimated_current_a >= 0.0f && estimated_current_a <= 80.0f) {
+                      id(evbox_estimated_charging_current).publish_state(estimated_current_a);
+                    }
+                  }
+                }
+              }
+
+              id(last_meter_kwh) = meter_kwh;
+              id(last_meter_ms) = now;
+              id(has_last_meter) = true;
+            }
+
+            if (has_range(data, 52, 4)) {
+              uint16_t temp_raw = hex_to_uint16(data.substr(52, 4));
+              float temp_c = temp_raw / 10.0f;
+
+              if (temp_c > -40.0f && temp_c < 125.0f) {
+                id(evbox_chassis_temperature).publish_state(temp_c);
+              }
+            }
+
+            if (has_range(data, 68, 4)) {
+              float v1 = (float) hex_to_uint16(data.substr(68, 4));
+              if (v1 > 100.0f && v1 < 300.0f) {
+                id(evbox_phase_1_voltage).publish_state(v1);
+              }
+            }
+
+            if (has_range(data, 72, 4)) {
+              float v2 = (float) hex_to_uint16(data.substr(72, 4));
+              if (v2 > 100.0f && v2 < 300.0f) {
+                id(evbox_phase_2_voltage).publish_state(v2);
+              }
+            }
+
+            if (has_range(data, 76, 4)) {
+              float v3 = (float) hex_to_uint16(data.substr(76, 4));
+              if (v3 > 100.0f && v3 < 300.0f) {
+                id(evbox_phase_3_voltage).publish_state(v3);
+              }
+            }
+
+            if (has_range(data, 68, 12) && has_range(data, 80, 12)) {
+              float v1 = hex_to_uint16(data.substr(68, 4));
+              float v2 = hex_to_uint16(data.substr(72, 4));
+              float v3 = hex_to_uint16(data.substr(76, 4));
+
+              float i1 = hex_to_uint16(data.substr(80, 4)) / 100.0f;
+              float i2 = hex_to_uint16(data.substr(84, 4)) / 100.0f;
+              float i3 = hex_to_uint16(data.substr(88, 4)) / 100.0f;
+
+              if (v1 > 100.0f && v1 < 300.0f &&
+                  v2 > 100.0f && v2 < 300.0f &&
+                  v3 > 100.0f && v3 < 300.0f &&
+                  i1 >= 0.0f && i1 < 100.0f &&
+                  i2 >= 0.0f && i2 < 100.0f &&
+                  i3 >= 0.0f && i3 < 100.0f) {
+                float power_kw = ((v1 * i1) + (v2 * i2) + (v3 * i3)) / 1000.0f;
+                id(evbox_estimated_power).publish_state(power_kw);
+                float phases = id(evbox_solar_charging_phases).state;
+                if (phases < 1.0f) phases = 1.0f;
+                if (phases > 3.0f) phases = 3.0f;
+
+                float estimated_current_a = (power_kw * 1000.0f) / (230.0f * phases);
+
+                if (estimated_current_a >= 0.0f && estimated_current_a <= 80.0f) {
+                  id(evbox_estimated_charging_current).publish_state(estimated_current_a);
+                }
+              }
+            }
+
+            if (data.size() >= 264) {
+              send_frame(src, "80", "26", "0000000000000000");
+            } else {
+              send_frame(src, "80", "26", "00000000");
+            }
+
+            return;
+          }
+
+          // Command 6A: Charging state request/status
+          if (cmd == "6A") {
+            std::string state = data.size() >= 2 ? data.substr(0, 2) : "??";
+
+            // Belangrijk: 6A moet ACK krijgen. Dit is init/CP-gedrag, geen startcommando.
+            send_frame(src, "80", "6A", "AA00");
+            publish_debug("Sent command 6A ACK AA00", 2);
+
+            if (state == "00") {
+              id(charging_status).publish_state("G2 state 00 - waiting for command 26");
+              id(evbox_is_charging).publish_state(false);
+              publish_debug("G2 state 00 received; waiting for command 26", 2);
+
+            } else if (state == "01") {
+              id(charging_status).publish_state("Charging / active");
+              id(evbox_is_charging).publish_state(true);
+              publish_debug("Charging state: G2 state 01 - charging / active", 2);
+
+            } else if (state == "07") {
+              id(charging_status).publish_state("G2 state 07 - authorized / ready");
+              publish_debug("Charging state: G2 state 07 - authorized / ready", 2);
+
+              if ((id(manual_start_requested) || id(charging_mode) == 2 || id(charging_mode) == 3) && !id(start_sent)) {
+                id(start_sent) = true;
+                id(manual_start_requested) = false;
+                id(delayed_g2_start).execute();
+                id(charging_status).publish_state("Delayed start scheduled after G2 6A state 07");
+                publish_debug("Delayed command 6B scheduled after command 6A state 07", 2);
+              }
+            } else if (state == "80") {
+              id(charging_status).publish_state("Unplugged");
+              id(evbox_is_charging).publish_state(false);
+              id(start_sent) = false;
+              publish_debug("Charging state: Unplugged", 2);
+            } else if (state == "81") {
+              id(charging_status).publish_state("Charging");
+              id(evbox_is_charging).publish_state(true);
+              publish_debug("Charging state: Charging", 2);
+            } else if (state == "A0") {
+              id(charging_status).publish_state("Available");
+              id(evbox_is_charging).publish_state(false);
+              id(start_sent) = false;
+              publish_debug("Charging state: Available", 2);
+            } else if (state == "A7") {
+              id(charging_status).publish_state("Ready");
+              publish_debug("Charging state: Ready", 2);
+
+              if ((id(charging_mode) == 2 || id(charging_mode) == 3) && !id(start_sent)) {
+                send_frame(src, "80", "6B", "01003C00A000A000A0");
+                id(start_sent) = true;
+                id(charging_status).publish_state("Start charging sent after 6A state A7");
+                publish_debug("Start charging sent via command 6B after command 6A state A7", 2);
+              }
+            } else if (state == "C1") {
+              id(charging_status).publish_state("Finished");
+              id(evbox_is_charging).publish_state(false);
+              id(start_sent) = false;
+              publish_debug("Charging state: Finished", 2);
+            } else if (state == "E7") {
+              id(charging_status).publish_state("Failed");
+              id(evbox_is_charging).publish_state(false);
+              id(start_sent) = false;
+              publish_debug("Charging state: Failed", 1);
+            } else {
+              id(charging_status).publish_state("Charging state " + state);
+              publish_debug("Unknown charging state " + state, 2);
+            }
+
+            return;
+          }
+
+          // Command 6B response / ACK
+          if (cmd == "6B") {
+            publish_debug("Command 6B response received", 2);
+            return;
+          }
+
+          // Command 31: Remote start response
+          if (cmd == "31") {
+            publish_debug("Command 31 remote start response: " + data, 2);
+
+            if (data == "01") {
+              id(charging_status).publish_state("Remote start accepted");
+            } else if (data == "23") {
+              id(charging_status).publish_state("Remote start failed");
+            } else {
+              id(charging_status).publish_state("Remote start response " + data);
+            }
+
+            return;
+          }
+
+          // Command 32: Remote stop response
+          if (cmd == "32") {
+            publish_debug("Command 32 remote stop response: " + data, 2);
+            if (data == "01") {
+              id(start_sent) = false;
+              id(evbox_is_charging).publish_state(false);
+              id(charging_status).publish_state("Remote stop accepted");
+
+              auto now = id(ha_time).now();
+
+              if (now.is_valid()) {
+                char end_time[32];
+                snprintf(
+                  end_time,
+                  sizeof(end_time),
+                  "%04d-%02d-%02d %02d:%02d:%02d",
+                  now.year,
+                  now.month,
+                  now.day_of_month,
+                  now.hour,
+                  now.minute,
+                  now.second
+                );
+
+                id(evbox_last_session_end_time).publish_state(std::string(end_time));
+              }
+
+              id(session_active) = false;
+              id(evbox_session_active).publish_state(false);
+
+              id(evbox_last_session_id).publish_state(id(current_session_id));
+              id(evbox_last_session_energy).publish_state(id(session_energy_kwh));
+              id(evbox_last_session_solar_surplus_energy).publish_state(id(session_solar_surplus_energy_kwh));
+              id(evbox_last_session_cost).publish_state(id(session_cost_eur));
+
+              if (id(session_energy_kwh) > 0.01f) {
+                float solar_share = (id(session_solar_surplus_energy_kwh) / id(session_energy_kwh)) * 100.0f;
+                if (solar_share < 0.0f) solar_share = 0.0f;
+                if (solar_share > 100.0f) solar_share = 100.0f;
+                id(evbox_last_session_solar_surplus_share).publish_state(solar_share);
+              }
+
+              id(evbox_last_session_end_reason).publish_state("Remote stop accepted");
+
+            } else if (data == "23") {
+              id(charging_status).publish_state("Remote stop failed / already stopped");
+            } else {
+              id(charging_status).publish_state("Remote stop response " + data);
+            }
+            id(manual_start_requested) = false;
+            return;
+          }
+
+          // Command 33: Get CB configuration response
+          if (cmd == "33") {
+            publish_debug("Command 33 configuration response: " + data, 2);
+            id(charging_status).publish_state("Configuration received");
+
+            id(evbox_config_raw).publish_state(data);
+
+            char profile_msg[80];
+            snprintf(
+              profile_msg,
+              sizeof(profile_msg),
+              "Length %u hex chars",
+              (unsigned int) data.size()
+            );
+
+            if (data.size() == 60) {
+              id(evbox_config_profile).publish_state("Firmware/config profile 52-like");
+            } else if (data.size() == 74) {
+              id(evbox_config_profile).publish_state("Firmware/config profile 125-like, 74 chars");
+            } else if (data.size() == 78) {
+              id(evbox_config_profile).publish_state("Firmware/config profile 125-like, 78 chars");
+            } else if (data.size() == 84) {
+              id(evbox_config_profile).publish_state("Firmware/config profile 140-like");
+            } else {
+              id(evbox_config_profile).publish_state(std::string(profile_msg));
+            }
+
+            // Volgens command 33 mapping:
+            // 20-23 = meter update interval in seconds
+            if (has_range(data, 20, 4)) {
+              uint16_t meter_interval = hex_to_uint16(data.substr(20, 4));
+              id(evbox_config_meter_update_interval).publish_state((float) meter_interval);
+            }
+
+            // 30-31 = meter type
+            if (has_range(data, 30, 2)) {
+              std::string meter_type = data.substr(30, 2);
+
+              if (meter_type == "00") {
+                id(evbox_meter_type).publish_state("Pulse");
+              } else if (meter_type == "01") {
+                id(evbox_meter_type).publish_state("Serial");
+              } else {
+                id(evbox_meter_type).publish_state("Unknown " + meter_type);
+              }
+            }
+
+            // 36-37 = LED brightness percentage
+            if (has_range(data, 36, 2)) {
+              uint16_t brightness = hex_to_uint16(data.substr(36, 2));
+              id(evbox_config_led_brightness).publish_state((float) brightness);
+            }
+
+            // 54-55 = enable auto start
+            if (has_range(data, 54, 2)) {
+              std::string auto_start = data.substr(54, 2);
+
+              if (auto_start == "00") {
+                id(evbox_auto_start_config).publish_state("Disabled");
+              } else if (auto_start == "01") {
+                id(evbox_auto_start_config).publish_state("Enabled");
+              } else {
+                id(evbox_auto_start_config).publish_state("Unknown " + auto_start);
+              }
+            } else {
+              id(evbox_auto_start_config).publish_state("Not present");
+            }
+
+            // 66-67 = allow remote start.
+            // Niet aanwezig in jouw 60-char response, wel in langere firmware-responses.
+            if (has_range(data, 66, 2)) {
+              std::string remote_start = data.substr(66, 2);
+
+              if (remote_start == "00") {
+                id(evbox_remote_start_config).publish_state("Disabled");
+              } else if (remote_start == "01") {
+                id(evbox_remote_start_config).publish_state("Enabled");
+              } else {
+                id(evbox_remote_start_config).publish_state("Unknown " + remote_start);
+              }
+            } else {
+              id(evbox_remote_start_config).publish_state("Not present in this response");
+            }
+
+            return;
+          }
+
+          // Command 34 response
+          if (cmd == "34") {
+            publish_debug("Command 34 response: " + data, 3);
+            return;
+          }
+
+script:
+  - id: delayed_g2_start
+    mode: restart
+    then:
+      - delay: 800ms
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "6B", "01003C00A000A000A0");
+          //send_frame("80", "A0", "69", "00A000A000A0003C00A000A000A0");
+          //id(evbox_debug).publish_state("Sent SmartGrid command 69 current limit 16A after 6B", 2);
+          id(last_sent_current_tenths) = 160;
+          id(evbox_charge_current_limit).publish_state(16.0f);
+          id(charging_status).publish_state("Delayed G2 start/current limit sent");
+          id(evbox_debug).publish_state("Delayed G2 start sent via command 6B");
+
+  - id: send_dynamic_current_limit
+    mode: restart
+    then:
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          if (isnan(id(evbox_grid_power_input).state)) {
+            id(evbox_debug).publish_state("Solar surplus: grid power unavailable; current limit not changed");
+            return;
+          }
+
+          float grid_power_w = id(evbox_grid_power_input).state;
+
+          // Jouw sensor:
+          // positief = netafname/import
+          // negatief = teruglevering/export
+
+          float deadband_w = id(evbox_solar_grid_deadband).state;
+          float stop_import_w = id(evbox_solar_stop_import_threshold).state;
+          float stop_delay_s = id(evbox_solar_stop_delay).state;
+
+          float min_a = id(evbox_solar_min_current).state;
+          float max_a = id(evbox_solar_max_current).state;
+          float step_a = id(evbox_solar_adjustment_step).state;
+
+          if (deadband_w < 0.0f) deadband_w = 0.0f;
+          if (stop_import_w < deadband_w) stop_import_w = deadband_w;
+          if (stop_delay_s < 30.0f) stop_delay_s = 30.0f;
+
+          if (min_a < 6.0f) min_a = 6.0f;
+          if (max_a < min_a) max_a = min_a;
+          if (max_a > 32.0f) max_a = 32.0f;
+
+          if (step_a < 0.5f) step_a = 0.5f;
+          if (step_a > 5.0f) step_a = 5.0f;
+
+          int min_tenths = (int) roundf(min_a * 10.0f);
+          int max_tenths = (int) roundf(max_a * 10.0f);
+          int step_tenths = (int) roundf(step_a * 10.0f);
+
+          int current_tenths = id(last_sent_current_tenths);
+
+          // Eerste keer in Solar Surplus: begin op maximum.
+          // Daarna regelt hij stap voor stap terug of op.
+          if (current_tenths <= 0) {
+            current_tenths = max_tenths;
+          }
+
+          int new_current_tenths = current_tenths;
+          std::string action = "hold";
+
+          if (grid_power_w > deadband_w) {
+            // We trekken te veel uit het net: zachter laden.
+            new_current_tenths = current_tenths - step_tenths;
+            action = "decrease";
+          } else if (grid_power_w < -deadband_w) {
+            // We leveren nog terug aan het net: harder laden.
+            new_current_tenths = current_tenths + step_tenths;
+            action = "increase";
+          } else {
+            // Rond nul: niets aanpassen.
+            action = "hold";
+          }
+
+          if (new_current_tenths < min_tenths) new_current_tenths = min_tenths;
+          if (new_current_tenths > max_tenths) new_current_tenths = max_tenths;
+
+          bool at_minimum = new_current_tenths <= min_tenths;
+
+          // Stoplogica:
+          // Als we al op minimum zitten en tóch langere tijd te veel importeren,
+          // dan stoppen we de sessie.
+          if (at_minimum && grid_power_w > stop_import_w) {
+            uint32_t now_ms = millis();
+
+            if (id(solar_import_over_limit_since_ms) == 0) {
+              id(solar_import_over_limit_since_ms) = now_ms;
+
+              char msg[180];
+              snprintf(
+                msg,
+                sizeof(msg),
+                "Solar stop timer started: grid %.0fW > %.0fW while at minimum %.1fA",
+                grid_power_w,
+                stop_import_w,
+                min_tenths / 10.0f
+              );
+              id(evbox_debug).publish_state(std::string(msg));
+            } else {
+              uint32_t elapsed_ms = now_ms - id(solar_import_over_limit_since_ms);
+              uint32_t required_ms = (uint32_t) (stop_delay_s * 1000.0f);
+
+              if (elapsed_ms >= required_ms) {
+                send_frame(id(cb_address), "80", "32", "00000000");
+
+                id(start_sent) = false;
+                id(solar_stopped_by_surplus_control) = true;
+                id(solar_import_over_limit_since_ms) = 0;
+
+                id(charging_status).publish_state("Solar surplus stopped charging due to sustained grid import");
+                id(evbox_debug).publish_state("Solar surplus sent stop command 32 due to sustained grid import");
+                return;
+              } else {
+                char msg[200];
+                snprintf(
+                  msg,
+                  sizeof(msg),
+                  "Solar stop pending: grid %.0fW > %.0fW for %lus / %.0fs",
+                  grid_power_w,
+                  stop_import_w,
+                  (unsigned long) (elapsed_ms / 1000UL),
+                  stop_delay_s
+                );
+                id(evbox_debug).publish_state(std::string(msg));
+              }
+            }
+          } else {
+            id(solar_import_over_limit_since_ms) = 0;
+          }
+
+          if (new_current_tenths == current_tenths && action == "hold") {
+            char msg[180];
+            snprintf(
+              msg,
+              sizeof(msg),
+              "Solar feedback hold: grid %.0fW within deadband +/-%.0fW, current %.1fA",
+              grid_power_w,
+              deadband_w,
+              current_tenths / 10.0f
+            );
+            id(evbox_debug).publish_state(std::string(msg));
+            return;
+          }
+
+          if (new_current_tenths == current_tenths) {
+            char msg[180];
+            snprintf(
+              msg,
+              sizeof(msg),
+              "Solar feedback %s blocked by min/max: grid %.0fW, current %.1fA",
+              action.c_str(),
+              grid_power_w,
+              current_tenths / 10.0f
+            );
+            id(evbox_debug).publish_state(std::string(msg));
+            return;
+          }
+
+          id(last_sent_current_tenths) = new_current_tenths;
+          id(evbox_charge_current_limit).publish_state(new_current_tenths / 10.0f);
+
+          char current_hex[5];
+          snprintf(current_hex, sizeof(current_hex), "%04X", new_current_tenths);
+
+          std::string payload = "01003C";
+          payload += current_hex;
+          payload += current_hex;
+          payload += current_hex;
+
+          send_frame(id(cb_address), "80", "6B", payload);
+
+          char msg[220];
+          snprintf(
+            msg,
+            sizeof(msg),
+            "Solar feedback %s: grid %.0fW, deadband +/-%.0fW, current %.1fA -> %.1fA, payload %s",
+            action.c_str(),
+            grid_power_w,
+            deadband_w,
+            current_tenths / 10.0f,
+            new_current_tenths / 10.0f,
+            payload.c_str()
+          );
+
+          id(evbox_debug).publish_state(std::string(msg));
+          id(charging_status).publish_state("Solar feedback current updated");
+
+  - id: delayed_get_configuration
+    mode: restart
+    then:
+      - delay: 1500ms
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "33", "");
+          id(evbox_debug).publish_state("Delayed get configuration sent via command 33");
+
+# Vraag periodiek een state update op + communicatie-watchdog
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (id(charging_mode) == 3 && id(evbox_is_charging).state) {
+            id(send_dynamic_current_limit).execute();
+          }
+
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame("BC", "80", "1B", "");
+          send_frame(id(cb_address), "80", "1B", "");
+
+  - interval: 10s
+    then:
+      - lambda: |-
+          if (id(last_valid_rx_ms) == 0) {
+            id(evbox_communication_ok).publish_state(false);
+            return;
+          }
+
+          if (millis() - id(last_valid_rx_ms) > 120000UL) {
+            id(evbox_communication_ok).publish_state(false);
+          }
+
+  - interval: 30s
+    then:
+      - lambda: |-
+          if ((id(charging_mode) == 1 || id(charging_mode) == 2) && id(evbox_is_charging).state) {
+            auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+              std::string payload = dst + src + cmd + data;
+
+              uint8_t checksum = 0;
+              uint8_t parity = 0;
+
+              for (char c : payload) {
+                checksum += (uint8_t)c;
+                parity ^= (uint8_t)c;
+              }
+
+              char cs[3];
+              char pa[3];
+              snprintf(cs, sizeof(cs), "%02X", checksum);
+              snprintf(pa, sizeof(pa), "%02X", parity);
+
+              std::string frame = "\x02" + payload + std::string(cs) + std::string(pa) + "\x03\xFF";
+              id(uart_evbox).write_array((const uint8_t*) frame.data(), frame.size());
+
+              ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+            };
+
+            send_frame(id(cb_address), "80", "6B", "01003C00A000A000A0");
+            //send_frame("80", "A0", "69", "00A000A000A0003C00A000A000A0");
+            //id(evbox_debug).publish_state("Sent SmartGrid command 69 current limit 16A after 6B", 2);
+
+            id(last_sent_current_tenths) = 160;
+            id(evbox_charge_current_limit).publish_state(16.0f);
+            id(evbox_debug).publish_state("Keepalive: repeated 6B current limit 16A");
+          }
+
+# ==================== HOME ASSISTANT CONTROLS ====================
+select:
+  - platform: template
+    name: "EVBox Debug Mode"
+    id: evbox_debug_mode
+    optimistic: true
+    restore_value: true
+    options:
+      - "Off"
+      - "Errors only"
+      - "Important"
+      - "Verbose"
+    initial_option: "Important"
+    set_action:
+      - lambda: |-
+          if (x == "Off") {
+            id(debug_mode) = 0;
+          } else if (x == "Errors only") {
+            id(debug_mode) = 1;
+          } else if (x == "Important") {
+            id(debug_mode) = 2;
+          } else if (x == "Verbose") {
+            id(debug_mode) = 3;
+          }
+
+  - platform: template
+    name: "EVBox Charging Mode"
+    id: evbox_charging_mode
+    optimistic: true
+    restore_value: true
+    options:
+      - "Off"
+      - "Manual"
+      - "Auto"
+      - "Solar Surplus"
+    initial_option: "Manual"
+    set_action:
+      - lambda: |-
+          if (x == "Off") {
+            id(charging_mode) = 0;
+            id(evbox_charging_mode_status).publish_state("Off");
+            id(charging_status).publish_state("Charging mode: Off");
+          } else if (x == "Manual") {
+            id(charging_mode) = 1;
+            id(evbox_charging_mode_status).publish_state("Manual");
+            id(charging_status).publish_state("Charging mode: Manual");
+          } else if (x == "Auto") {
+            id(charging_mode) = 2;
+            id(evbox_charging_mode_status).publish_state("Auto");
+            id(charging_status).publish_state("Charging mode: Auto");
+          } else if (x == "Solar Surplus") {
+            id(charging_mode) = 3;
+            id(evbox_charging_mode_status).publish_state("Solar Surplus");
+            id(charging_status).publish_state("Charging mode: Solar Surplus");
+          }
+
+number:
+  - platform: template
+    name: "EVBox Debug Interval"
+    id: evbox_debug_interval
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 300
+    step: 1
+    unit_of_measurement: "s"
+    initial_value: 30
+    entity_category: config
+    set_action:
+      - lambda: |-
+          id(debug_interval_seconds) = (int) x;
+
+  - platform: template
+    name: "EVBox Solar Minimum Current"
+    id: evbox_solar_min_current
+    optimistic: true
+    restore_value: true
+    min_value: 6
+    max_value: 32
+    step: 1
+    unit_of_measurement: "A"
+    initial_value: 6
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Maximum Current"
+    id: evbox_solar_max_current
+    optimistic: true
+    restore_value: true
+    min_value: 6
+    max_value: 32
+    step: 1
+    unit_of_measurement: "A"
+    initial_value: 16
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Charging Phases"
+    id: evbox_solar_charging_phases
+    optimistic: true
+    restore_value: true
+    min_value: 1
+    max_value: 3
+    step: 1
+    initial_value: 1
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Reserve Power"
+    id: evbox_solar_reserve_power
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 2000
+    step: 50
+    unit_of_measurement: "W"
+    initial_value: 200
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Grid Deadband"
+    id: evbox_solar_grid_deadband
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 2000
+    step: 50
+    unit_of_measurement: "W"
+    initial_value: 300
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Adjustment Step"
+    id: evbox_solar_adjustment_step
+    optimistic: true
+    restore_value: true
+    min_value: 0.5
+    max_value: 5
+    step: 0.5
+    unit_of_measurement: "A"
+    initial_value: 1
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Stop Import Threshold"
+    id: evbox_solar_stop_import_threshold
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 5000
+    step: 50
+    unit_of_measurement: "W"
+    initial_value: 800
+    entity_category: config
+
+  - platform: template
+    name: "EVBox Solar Stop Delay"
+    id: evbox_solar_stop_delay
+    optimistic: true
+    restore_value: true
+    min_value: 30
+    max_value: 1800
+    step: 30
+    unit_of_measurement: "s"
+    initial_value: 300
+    entity_category: config
+
+
+# ==================== TEXT SENSOREN ====================
+text_sensor:
+  - platform: template
+    name: "EVBox Charging Status"
+    id: charging_status
+    icon: "mdi:ev-station"
+
+  - platform: template
+    name: "EVBox Charging Mode Status"
+    id: evbox_charging_mode_status
+    icon: "mdi:ev-station"
+
+  - platform: template
+    name: "EVBox Debug"
+    id: evbox_debug
+    icon: "mdi:bug-outline"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Detected Generation"
+    id: evbox_detected_generation
+    icon: "mdi:ev-station"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Configuration Raw"
+    id: evbox_config_raw
+    icon: "mdi:cog-outline"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Meter Type"
+    id: evbox_meter_type
+    icon: "mdi:counter"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Auto Start Config"
+    id: evbox_auto_start_config
+    icon: "mdi:ev-plug-type2"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Remote Start Config"
+    id: evbox_remote_start_config
+    icon: "mdi:remote"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Configuration Profile"
+    id: evbox_config_profile
+    icon: "mdi:chip"
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "EVBox Current Session ID"
+    id: evbox_current_session_id
+    icon: "mdi:identifier"
+
+  - platform: template
+    name: "EVBox Last Session ID"
+    id: evbox_last_session_id
+    icon: "mdi:identifier"
+
+  - platform: template
+    name: "EVBox Session Start Time"
+    id: evbox_session_start_time
+    icon: "mdi:clock-start"
+
+  - platform: template
+    name: "EVBox Last Session End Time"
+    id: evbox_last_session_end_time
+    icon: "mdi:clock-end"
+
+  - platform: template
+    name: "EVBox Last Session End Reason"
+    id: evbox_last_session_end_reason
+    icon: "mdi:ev-station"
+
+  - platform: template
+    name: "EVBox Current RFID"
+    id: evbox_current_rfid
+    icon: "mdi:card-account-details-outline"
+
+  - platform: template
+    name: "EVBox Last RFID"
+    id: evbox_last_rfid
+    icon: "mdi:card-account-details-outline"
+
+  - platform: template
+    name: "EVBox Session RFID"
+    id: evbox_session_rfid
+    icon: "mdi:card-account-details-outline"
+
+# ==================== BINARY SENSOREN ====================
+binary_sensor:
+  - platform: status
+    name: "EVBox Autostart Status"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Communication OK"
+    id: evbox_communication_ok
+    device_class: connectivity
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Is Charging"
+    id: evbox_is_charging
+    device_class: power
+
+  - platform: template
+    name: "EVBox Locked"
+    id: evbox_locked
+    device_class: lock
+
+  - platform: template
+    name: "EVBox Session Active"
+    id: evbox_session_active
+    device_class: running
+
+# ==================== NUMERIEKE SENSOREN ====================
+sensor:
+  - platform: template
+    name: "EVBox Meter Total"
+    id: evbox_meter_total
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+
+  - platform: template
+    name: "EVBox Estimated Power"
+    id: evbox_estimated_power
+    unit_of_measurement: "kW"
+    accuracy_decimals: 2
+    device_class: power
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Chassis Temperature"
+    id: evbox_chassis_temperature
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Cable Max Current"
+    id: evbox_cable_max_current
+    unit_of_measurement: "A"
+    accuracy_decimals: 0
+    device_class: current
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Phase 1 Voltage"
+    id: evbox_phase_1_voltage
+    unit_of_measurement: "V"
+    accuracy_decimals: 0
+    device_class: voltage
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Phase 2 Voltage"
+    id: evbox_phase_2_voltage
+    unit_of_measurement: "V"
+    accuracy_decimals: 0
+    device_class: voltage
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Phase 3 Voltage"
+    id: evbox_phase_3_voltage
+    unit_of_measurement: "V"
+    accuracy_decimals: 0
+    device_class: voltage
+    state_class: measurement
+
+  - platform: wifi_signal
+    name: "EVBox Autostart WiFi Signaal"
+    update_interval: 60s
+    entity_category: diagnostic
+
+  - platform: uptime
+    name: "EVBox Autostart Uptime"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Config Meter Update Interval"
+    id: evbox_config_meter_update_interval
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    icon: "mdi:timer-outline"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Config LED Brightness"
+    id: evbox_config_led_brightness
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:brightness-6"
+    entity_category: diagnostic    
+
+  - platform: homeassistant
+    name: "EVBox Grid Power Input"
+    id: evbox_grid_power_input
+    entity_id: ${grid_power_sensor_entity_id}
+    unit_of_measurement: "W"
+    internal: false
+
+  - platform: template
+    name: "EVBox Session Energy"
+    id: evbox_session_energy
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total
+
+  - platform: template
+    name: "EVBox Last Session Energy"
+    id: evbox_last_session_energy
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+
+  - platform: template
+    name: "EVBox Session Solar Surplus Energy"
+    id: evbox_session_solar_surplus_energy
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+
+  - platform: template
+    name: "EVBox Last Session Solar Surplus Energy"
+    id: evbox_last_session_solar_surplus_energy
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+
+  - platform: template
+    name: "EVBox Session Grid Energy"
+    id: evbox_session_grid_energy
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+
+  - platform: template
+    name: "EVBox Session Solar Surplus Share"
+    id: evbox_session_solar_surplus_share
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    icon: "mdi:solar-power-variant"
+
+  - platform: template
+    name: "EVBox Last Session Solar Surplus Share"
+    id: evbox_last_session_solar_surplus_share
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    icon: "mdi:solar-power-variant"
+
+  - platform: template
+    name: "EVBox Session Duration"
+    id: evbox_session_duration
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    icon: "mdi:timer-outline"
+
+  - platform: template
+    name: "EVBox Charge Current Limit"
+    id: evbox_charge_current_limit
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+
+  - platform: template
+    name: "EVBox Estimated Charging Current"
+    id: evbox_estimated_charging_current
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+
+  - platform: homeassistant
+    name: "EVBox Energy Price Input"
+    id: evbox_energy_price_input
+    entity_id: ${energy_price_sensor_entity_id}
+    unit_of_measurement: "EUR/kWh"
+    internal: false
+
+  - platform: template
+    name: "EVBox Session Cost"
+    id: evbox_session_cost
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    icon: "mdi:currency-eur"
+
+  - platform: template
+    name: "EVBox Last Session Cost"
+    id: evbox_last_session_cost
+    unit_of_measurement: "€"
+    accuracy_decimals: 2
+    icon: "mdi:currency-eur"
+
+  - platform: template
+    name: "EVBox Session Average Price"
+    id: evbox_session_average_price
+    unit_of_measurement: "EUR/kWh"
+    accuracy_decimals: 4
+    icon: "mdi:cash-clock"
+
+# ==================== BUTTONS ====================
+button:
+  - platform: restart
+    name: "EVBox Autostart Restart"
+    entity_category: diagnostic
+
+  - platform: safe_mode
+    name: "EVBox Autostart Safe Mode Boot"
+    entity_category: diagnostic
+
+  - platform: template
+    name: "EVBox Start Charging"
+    on_press:
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          if (id(charging_mode) == 0) {
+            id(charging_status).publish_state("Start blocked - charging mode Off");
+            id(evbox_debug).publish_state("Start blocked because charging mode is Off");
+            return;
+          }
+
+          id(manual_start_requested) = true;
+          id(start_sent) = false;
+          id(last_sent_current_tenths) = 0;
+          id(solar_import_over_limit_since_ms) = 0;
+          id(solar_stopped_by_surplus_control) = false;
+
+          send_frame(id(cb_address), "80", "31", "08000000AS00000000000000");
+          id(charging_status).publish_state("Start charging requested");
+          id(evbox_debug).publish_state("Start charging requested via command 31");
+
+  - platform: template
+    name: "EVBox Stop Charging"
+    on_press:
+      - lambda: |-
+          auto send_frame = [&](std::string dst, std::string src, std::string cmd, std::string data) {
+            std::string payload = dst + src + cmd + data;
+
+            uint8_t checksum = 0;
+            uint8_t parity = 0;
+            for (char c : payload) {
+              checksum = (checksum + (uint8_t)c) & 0xFF;
+              parity ^= (uint8_t)c;
+            }
+
+            char cs[3];
+            char pr[3];
+            snprintf(cs, sizeof(cs), "%02X", checksum);
+            snprintf(pr, sizeof(pr), "%02X", parity);
+
+            std::vector<uint8_t> frame;
+            frame.push_back(0x02);
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            frame.push_back(cs[0]);
+            frame.push_back(cs[1]);
+            frame.push_back(pr[0]);
+            frame.push_back(pr[1]);
+            frame.push_back(0x03);
+            frame.push_back(0xFF);
+
+            id(uart_evbox).write_array(frame.data(), frame.size());
+            ESP_LOGD("evbox", "TX payload: %s", payload.c_str());
+          };
+
+          send_frame(id(cb_address), "80", "32", "00000000");
+          id(charging_status).publish_state("Stop charging requested");
+          id(evbox_debug).publish_state("Stop charging requested via command 32");

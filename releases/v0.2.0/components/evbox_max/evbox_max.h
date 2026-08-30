@@ -1,0 +1,374 @@
+#pragma once
+
+#include "controller.h"
+#include "protocol.h"
+#include <cmath>
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/uart/uart.h"
+#include "esphome/core/component.h"
+#include "esphome/core/gpio.h"
+#include "esphome/core/preferences.h"
+
+namespace esphome {
+namespace evbox_max {
+
+enum EvboxState : uint8_t {
+  BOOT = 0,
+  WAIT_REGISTRATION,
+  ASSIGN_ADDRESS,
+  READ_INFO,
+  READ_CONFIG,
+  IDLE,
+  PREPARING,
+  AUTHORIZED,
+  STARTING,
+  SESSION_STARTING,
+  CHARGING,
+  PAUSED,
+  FINISHING,
+  FAULT,
+};
+
+class EvboxMaxComponent : public Component, public uart::UARTDevice {
+ public:
+  void setup() override;
+  void loop() override;
+  void dump_config() override;
+
+  void set_mode(ChargingMode mode);
+  void set_failsafe_mode(FailsafeMode mode);
+  void set_max_current(float current);
+  void set_charger_breaker_current(float current);
+  void set_main_fuse_current(float current);
+  void set_manual_current(float current);
+  void set_failsafe_current(float current);
+  ChargingMode get_mode() const { return this->controller_.mode(); }
+  FailsafeMode get_failsafe_mode() const { return this->controller_.failsafe_mode(); }
+  float get_max_current() const { return this->inputs_.max_current; }
+  float get_charger_breaker_current() const { return this->inputs_.charger_breaker_current; }
+  float get_main_fuse_current() const { return this->inputs_.main_fuse_current; }
+  float get_manual_current() const { return this->inputs_.manual_current; }
+  float get_failsafe_current() const { return this->controller_.failsafe_current(); }
+  bool get_pv_enabled() const { return this->inputs_.pv_enabled; }
+  GridPhase get_evbox_l1_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l1_grid_phase); }
+  GridPhase get_evbox_l2_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l2_grid_phase); }
+  GridPhase get_evbox_l3_grid_phase() const { return static_cast<GridPhase>(this->inputs_.evbox_l3_grid_phase); }
+  void set_evbox_l1_grid_phase(GridPhase phase);
+  void set_evbox_l2_grid_phase(GridPhase phase);
+  void set_evbox_l3_grid_phase(GridPhase phase);
+  void set_commissioning_mode(bool enabled) { this->commissioning_mode_ = enabled; }
+  void set_remote_start_card(const std::string &card) { this->remote_start_card_ = card; }
+  void set_charge_phases(uint8_t phases) {
+    const uint8_t clamped = phases < 1 ? 1 : (phases > 3 ? 3 : phases);
+    this->inputs_.charge_phases = clamped;
+    this->inputs_.active_phase_mask = clamped == 1 ? 0x01 : (clamped == 2 ? 0x03 : 0x07);
+    this->evbox_detected_charge_phases_ = clamped;
+    this->evbox_active_phase_mask_ = this->inputs_.active_phase_mask;
+    this->update_ev_measurements_();
+  }
+  void set_active_phase_mask(uint8_t mask) {
+    this->inputs_.active_phase_mask = mask & 0x07;
+    this->evbox_active_phase_mask_ = this->inputs_.active_phase_mask;
+    this->evbox_detected_charge_phases_ = this->count_phases_(this->inputs_.active_phase_mask);
+    this->update_ev_measurements_();
+  }
+  void set_heartbeat_interval(uint32_t interval) { this->heartbeat_interval_ms_ = interval; }
+  void set_watchdog_timeout(uint32_t timeout) { this->watchdog_timeout_ms_ = timeout; }
+  void set_rs485_de_pin(GPIOPin *pin) { this->rs485_de_pin_ = pin; }
+  void set_relay_evbox_known_pin(GPIOPin *pin) { this->relay_evbox_known_pin_ = pin; }
+  void set_relay_janitza_ok_pin(GPIOPin *pin) { this->relay_janitza_ok_pin_ = pin; }
+  void set_relay_charging_active_pin(GPIOPin *pin) { this->relay_charging_active_pin_ = pin; }
+  void set_relay_failsafe_pin(GPIOPin *pin) { this->relay_failsafe_pin_ = pin; }
+
+  void set_status_text_sensor(text_sensor::TextSensor *sensor) { this->status_text_sensor_ = sensor; }
+  void set_state_text_sensor(text_sensor::TextSensor *sensor) { this->state_text_sensor_ = sensor; }
+  void set_communication_text_sensor(text_sensor::TextSensor *sensor) { this->communication_text_sensor_ = sensor; }
+  void set_protocol_profile_text_sensor(text_sensor::TextSensor *sensor) { this->protocol_profile_text_sensor_ = sensor; }
+  void set_cb_serial_text_sensor(text_sensor::TextSensor *sensor) { this->cb_serial_text_sensor_ = sensor; }
+  void set_cb_status_detail_text_sensor(text_sensor::TextSensor *sensor) { this->cb_status_detail_text_sensor_ = sensor; }
+  void set_current_request_state_text_sensor(text_sensor::TextSensor *sensor) {
+    this->current_request_state_text_sensor_ = sensor;
+  }
+  void set_cable_status_text_sensor(text_sensor::TextSensor *sensor) { this->cable_status_text_sensor_ = sensor; }
+  void set_lock_status_text_sensor(text_sensor::TextSensor *sensor) { this->lock_status_text_sensor_ = sensor; }
+  void set_meter_status_text_sensor(text_sensor::TextSensor *sensor) { this->meter_status_text_sensor_ = sensor; }
+  void set_meter_model_text_sensor(text_sensor::TextSensor *sensor) { this->meter_model_text_sensor_ = sensor; }
+  void set_meter_serial_text_sensor(text_sensor::TextSensor *sensor) { this->meter_serial_text_sensor_ = sensor; }
+  void set_ev_current_sensor(sensor::Sensor *sensor) { this->ev_current_sensor_ = sensor; }
+  void set_current_limit_sensor(sensor::Sensor *sensor) { this->current_limit_sensor_ = sensor; }
+  void set_requested_current_sensor(sensor::Sensor *sensor) { this->requested_current_sensor_ = sensor; }
+  void set_allowed_current_sensor(sensor::Sensor *sensor) { this->allowed_current_sensor_ = sensor; }
+  void set_desired_current_sensor(sensor::Sensor *sensor) { this->desired_current_sensor_ = sensor; }
+  void set_commanded_current_sensor(sensor::Sensor *sensor) { this->commanded_current_sensor_ = sensor; }
+  void set_returned_current_limit_sensor(sensor::Sensor *sensor) { this->returned_current_limit_sensor_ = sensor; }
+  void set_pv_available_current_sensor(sensor::Sensor *sensor) { this->pv_available_current_sensor_ = sensor; }
+  void set_pv_start_timer_sensor(sensor::Sensor *sensor) { this->pv_start_timer_sensor_ = sensor; }
+  void set_pv_pause_timer_sensor(sensor::Sensor *sensor) { this->pv_pause_timer_sensor_ = sensor; }
+  void set_pv_status_text_sensor(text_sensor::TextSensor *sensor) { this->pv_status_text_sensor_ = sensor; }
+  void set_limit_reason_text_sensor(text_sensor::TextSensor *sensor) { this->limit_reason_text_sensor_ = sensor; }
+  void set_grid_phase_mapping_text_sensor(text_sensor::TextSensor *sensor) { this->grid_phase_mapping_text_sensor_ = sensor; }
+  void set_l1_current_sensor(sensor::Sensor *sensor) { this->l1_current_sensor_ = sensor; }
+  void set_l2_current_sensor(sensor::Sensor *sensor) { this->l2_current_sensor_ = sensor; }
+  void set_l3_current_sensor(sensor::Sensor *sensor) { this->l3_current_sensor_ = sensor; }
+  void set_l1_voltage_sensor(sensor::Sensor *sensor) { this->l1_voltage_sensor_ = sensor; }
+  void set_l2_voltage_sensor(sensor::Sensor *sensor) { this->l2_voltage_sensor_ = sensor; }
+  void set_l3_voltage_sensor(sensor::Sensor *sensor) { this->l3_voltage_sensor_ = sensor; }
+  void set_l1_power_factor_sensor(sensor::Sensor *sensor) { this->l1_power_factor_sensor_ = sensor; }
+  void set_l2_power_factor_sensor(sensor::Sensor *sensor) { this->l2_power_factor_sensor_ = sensor; }
+  void set_l3_power_factor_sensor(sensor::Sensor *sensor) { this->l3_power_factor_sensor_ = sensor; }
+  void set_detected_charge_phases_sensor(sensor::Sensor *sensor) { this->detected_charge_phases_sensor_ = sensor; }
+  void set_active_phase_mask_sensor(sensor::Sensor *sensor) { this->active_phase_mask_sensor_ = sensor; }
+  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
+  void set_session_energy_sensor(sensor::Sensor *sensor) { this->session_energy_sensor_ = sensor; }
+  void set_meter_value_sensor(sensor::Sensor *sensor) { this->meter_value_sensor_ = sensor; }
+  void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_sensor_ = sensor; }
+  void set_cb_firmware_sensor(sensor::Sensor *sensor) { this->cb_firmware_sensor_ = sensor; }
+  void set_cb_hardware_generation_sensor(sensor::Sensor *sensor) { this->cb_hardware_generation_sensor_ = sensor; }
+  void set_cb_is_charging_sensor(sensor::Sensor *sensor) { this->cb_is_charging_sensor_ = sensor; }
+  void set_cb_led_colour_sensor(sensor::Sensor *sensor) { this->cb_led_colour_sensor_ = sensor; }
+  void set_cb_lock_state_sensor(sensor::Sensor *sensor) { this->cb_lock_state_sensor_ = sensor; }
+  void set_cable_max_current_sensor(sensor::Sensor *sensor) { this->cable_max_current_sensor_ = sensor; }
+  void set_raw_meter_wh_sensor(sensor::Sensor *sensor) { this->raw_meter_wh_sensor_ = sensor; }
+
+  void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current,
+                      float l1_voltage, float l2_voltage, float l3_voltage, float l1_power_w, float l2_power_w,
+                      float l3_power_w, bool online);
+  void set_pv_enabled(bool enabled);
+  void start_session();
+  void stop_session();
+
+ protected:
+  struct StoredSettings {
+    uint32_t magic{0};
+    uint16_t version{0};
+    uint8_t mode{CHARGING_MODE_MANUAL};
+    uint8_t failsafe_mode{FAILSAFE_MODE_LIMIT_6A};
+    bool pv_enabled{false};
+    float manual_current{6.0f};
+    float max_current{16.0f};
+    float charger_breaker_current{16.0f};
+    float main_fuse_current{25.0f};
+    float failsafe_current{6.0f};
+    uint8_t evbox_l1_grid_phase{GRID_PHASE_L1};
+    uint8_t evbox_l2_grid_phase{GRID_PHASE_L2};
+    uint8_t evbox_l3_grid_phase{GRID_PHASE_L3};
+  };
+
+  void handle_frame_(const Frame &frame);
+  void transition_(EvboxState state);
+  void load_settings_();
+  void save_settings_();
+  StoredSettings current_settings_() const;
+  void apply_settings_(const StoredSettings &settings);
+  void update_meter_from_state_(const std::string &data);
+  void update_meter_from_push_(const std::string &data);
+  void update_meter_info_(const std::string &data);
+  void update_phase_detection_();
+  uint8_t count_phases_(uint8_t phase_mask) const;
+  void update_ev_measurements_();
+  void set_evbox_grid_phase_(uint8_t evbox_phase, GridPhase grid_phase);
+  const char *grid_phase_name_(uint8_t phase) const;
+  std::string grid_phase_mapping_name_() const;
+  void setup_output_pin_(GPIOPin *pin);
+  void update_relays_();
+  void note_chargebox_seen_(uint8_t address);
+  void run_startup_sequence_();
+  void schedule_startup_step_(uint8_t step, uint32_t delay_ms);
+  void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
+  void send_restart_registration_();
+  void send_connection_state_();
+  void send_led_enable_();
+  void send_status_update_request_();
+  void send_periodic_cmd18_();
+  void send_meter_update_interval_();
+  void send_config_request_();
+  bool send_known_good_meter_config_restore_(const std::string &config);
+  bool send_remote_start_config_enable_(const std::string &config);
+  bool send_unsolicited_authorize_card_();
+  bool send_remote_start_();
+  void send_remote_stop_();
+  void log_autostart_config_(const std::string &config);
+  void schedule_start_trigger_(uint32_t delay_ms);
+  void run_delayed_start_trigger_();
+  void run_remote_start_timeout_();
+  void schedule_current_release_(uint32_t delay_ms);
+  void run_delayed_current_release_();
+  void send_current_setpoint_(float amps);
+  void apply_current_limit_now_(const char *reason);
+  float apply_minimum_current_policy_(float requested_current, bool charge_flow_active);
+  bool pv_start_release_allowed_(float requested_current);
+  bool charge_flow_requested_() const;
+  bool current_setpoint_allowed_() const;
+  bool authorization_allowed_() const;
+  bool automatic_start_allowed_() const;
+  bool current_request_allows_start_(uint8_t code) const;
+  bool is_supported_current_request_(uint8_t code) const;
+  const char *protocol_profile_name_() const;
+  const char *cb_status_name_(uint8_t code) const;
+  const char *current_request_name_(uint8_t code) const;
+  uint32_t seconds_since_2000_() const;
+  void watchdog_();
+  void publish_();
+
+  const char *state_name_() const;
+  const char *communication_name_() const;
+
+  FrameParser parser_{};
+  ChargeController controller_{};
+  ControlInputs inputs_{};
+  EvboxState state_{BOOT};
+  uint8_t chargebox_address_{0x00};
+  std::string chargebox_serial_{};
+  std::string remote_start_card_{"000000AS"};
+  uint16_t chargebox_firmware_{0};
+  uint8_t chargebox_hardware_generation_{0};
+  uint32_t session_{1};
+  bool evbox_online_{false};
+  bool session_active_{false};
+  bool stop_requested_{false};
+  bool start_requested_{false};
+  bool current_start_released_{false};
+  bool finished_reset_pending_{false};
+  bool remote_start_blocked_{false};
+  bool automatic_remote_start_attempted_{false};
+  bool remote_start_pending_{false};
+  bool remote_start_timeout_logged_{false};
+  bool delayed_start_trigger_pending_{false};
+  bool commissioning_mode_{true};
+  bool settings_restored_{false};
+  bool have_session_start_meter_{false};
+  float active_current_{0.0f};
+  float requested_current_{0.0f};
+  float allowed_current_{0.0f};
+  float desired_current_{0.0f};
+  float commanded_current_{0.0f};
+  float returned_current_limit_{NAN};
+  bool current_limit_returned_{false};
+  bool pv_pause_active_{false};
+  float pv_available_current_{0.0f};
+  float pv_start_timer_remaining_s_{0.0f};
+  float pv_pause_timer_remaining_s_{0.0f};
+  float pv_grid_total_power_avg_w_{0.0f};
+  uint32_t pv_grid_total_power_avg_last_ms_{0};
+  bool pv_grid_total_power_avg_valid_{false};
+  std::string pv_status_{"IDLE"};
+  std::string limit_reason_{"UNKNOWN"};
+  uint32_t pv_surplus_ready_since_ms_{0};
+  uint32_t pv_surplus_low_since_ms_{0};
+  bool pv_pause_hold_logged_{false};
+  float ev_l1_current_a_{0.0f};
+  float ev_l2_current_a_{0.0f};
+  float ev_l3_current_a_{0.0f};
+  float ev_l1_voltage_v_{NAN};
+  float ev_l2_voltage_v_{NAN};
+  float ev_l3_voltage_v_{NAN};
+  float ev_l1_power_factor_{NAN};
+  float ev_l2_power_factor_{NAN};
+  float ev_l3_power_factor_{NAN};
+  float ev_power_w_{0.0f};
+  uint8_t evbox_detected_charge_phases_{1};
+  uint8_t evbox_active_phase_mask_{0x01};
+  float session_energy_kwh_{0.0f};
+  float meter_value_kwh_{NAN};
+  float raw_meter_wh_{NAN};
+  float session_start_meter_kwh_{0.0f};
+  float temperature_c_{NAN};
+  uint8_t cb_is_charging_{0};
+  uint8_t cb_led_colour_{0};
+  uint8_t cb_lock_state_{0};
+  uint8_t cb_cable_max_current_{0};
+  std::string cable_status_{"UNKNOWN"};
+  std::string lock_status_{"UNKNOWN"};
+  std::string meter_status_{"UNKNOWN"};
+  std::string meter_model_{"UNKNOWN"};
+  std::string meter_serial_{"UNKNOWN"};
+  uint32_t heartbeat_interval_ms_{5000};
+  uint32_t watchdog_timeout_ms_{30000};
+  uint32_t last_rx_ms_{0};
+  uint32_t last_periodic_cmd18_ms_{0};
+  uint32_t start_requested_ms_{0};
+  bool start_stall_logged_{false};
+  uint32_t remote_start_sent_ms_{0};
+  uint8_t last_cb_status_code_{0};
+  bool have_last_cb_status_code_{false};
+  uint8_t last_current_request_code_{0};
+  bool have_last_current_request_code_{false};
+  uint32_t last_current_request_ms_{0};
+  uint8_t pending_current_request_code_{0};
+  bool pending_current_request_after_config_{false};
+  bool delayed_current_release_pending_{false};
+  uint32_t delayed_start_trigger_due_ms_{0};
+  uint32_t delayed_current_release_due_ms_{0};
+  uint32_t last_heartbeat_rx_ms_{0};
+  uint32_t last_heartbeat_tx_ms_{0};
+  uint32_t last_publish_ms_{0};
+  uint32_t startup_step_due_ms_{0};
+  uint8_t startup_step_{0};
+  bool startup_config_received_{false};
+  bool known_good_meter_config_restore_attempted_{false};
+  bool known_good_meter_config_verified_{false};
+  uint32_t last_meter_config_restore_ms_{0};
+  uint8_t meter_config_restore_attempts_{0};
+  bool remote_start_config_write_attempted_{false};
+  bool remote_start_config_verified_{false};
+  uint32_t last_startup_sync_request_ms_{0};
+  ESPPreferenceObject settings_pref_{};
+  bool janitza_online_{false};
+
+  text_sensor::TextSensor *status_text_sensor_{nullptr};
+  text_sensor::TextSensor *state_text_sensor_{nullptr};
+  text_sensor::TextSensor *communication_text_sensor_{nullptr};
+  text_sensor::TextSensor *protocol_profile_text_sensor_{nullptr};
+  text_sensor::TextSensor *cb_serial_text_sensor_{nullptr};
+  text_sensor::TextSensor *cb_status_detail_text_sensor_{nullptr};
+  text_sensor::TextSensor *current_request_state_text_sensor_{nullptr};
+  text_sensor::TextSensor *cable_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *lock_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_model_text_sensor_{nullptr};
+  text_sensor::TextSensor *meter_serial_text_sensor_{nullptr};
+  sensor::Sensor *ev_current_sensor_{nullptr};
+  sensor::Sensor *current_limit_sensor_{nullptr};
+  sensor::Sensor *requested_current_sensor_{nullptr};
+  sensor::Sensor *allowed_current_sensor_{nullptr};
+  sensor::Sensor *desired_current_sensor_{nullptr};
+  sensor::Sensor *commanded_current_sensor_{nullptr};
+  sensor::Sensor *returned_current_limit_sensor_{nullptr};
+  sensor::Sensor *pv_available_current_sensor_{nullptr};
+  sensor::Sensor *pv_start_timer_sensor_{nullptr};
+  sensor::Sensor *pv_pause_timer_sensor_{nullptr};
+  text_sensor::TextSensor *pv_status_text_sensor_{nullptr};
+  text_sensor::TextSensor *limit_reason_text_sensor_{nullptr};
+  text_sensor::TextSensor *grid_phase_mapping_text_sensor_{nullptr};
+  sensor::Sensor *l1_current_sensor_{nullptr};
+  sensor::Sensor *l2_current_sensor_{nullptr};
+  sensor::Sensor *l3_current_sensor_{nullptr};
+  sensor::Sensor *l1_voltage_sensor_{nullptr};
+  sensor::Sensor *l2_voltage_sensor_{nullptr};
+  sensor::Sensor *l3_voltage_sensor_{nullptr};
+  sensor::Sensor *l1_power_factor_sensor_{nullptr};
+  sensor::Sensor *l2_power_factor_sensor_{nullptr};
+  sensor::Sensor *l3_power_factor_sensor_{nullptr};
+  sensor::Sensor *detected_charge_phases_sensor_{nullptr};
+  sensor::Sensor *active_phase_mask_sensor_{nullptr};
+  sensor::Sensor *power_sensor_{nullptr};
+  sensor::Sensor *session_energy_sensor_{nullptr};
+  sensor::Sensor *meter_value_sensor_{nullptr};
+  sensor::Sensor *temperature_sensor_{nullptr};
+  sensor::Sensor *cb_firmware_sensor_{nullptr};
+  sensor::Sensor *cb_hardware_generation_sensor_{nullptr};
+  sensor::Sensor *cb_is_charging_sensor_{nullptr};
+  sensor::Sensor *cb_led_colour_sensor_{nullptr};
+  sensor::Sensor *cb_lock_state_sensor_{nullptr};
+  sensor::Sensor *cable_max_current_sensor_{nullptr};
+  sensor::Sensor *raw_meter_wh_sensor_{nullptr};
+  GPIOPin *rs485_de_pin_{nullptr};
+  GPIOPin *relay_evbox_known_pin_{nullptr};
+  GPIOPin *relay_janitza_ok_pin_{nullptr};
+  GPIOPin *relay_charging_active_pin_{nullptr};
+  GPIOPin *relay_failsafe_pin_{nullptr};
+};
+
+}  // namespace evbox_max
+}  // namespace esphome
