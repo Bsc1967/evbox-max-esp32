@@ -139,6 +139,8 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void stop_session();
 
  protected:
+  static constexpr uint8_t MAX_CHARGEBOXES = 3;
+
   struct StoredSettings {
     uint32_t magic{0};
     uint16_t version{0};
@@ -153,6 +155,15 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
     uint8_t evbox_l1_grid_phase{GRID_PHASE_L1};
     uint8_t evbox_l2_grid_phase{GRID_PHASE_L2};
     uint8_t evbox_l3_grid_phase{GRID_PHASE_L3};
+  };
+
+  struct ChargeboxSlot {
+    uint8_t address{0};
+    std::string serial{};
+    uint16_t firmware{0};
+    uint8_t hardware_generation{0};
+    uint32_t last_seen_ms{0};
+    bool assigned{false};
   };
 
   void handle_frame_(const Frame &frame);
@@ -173,6 +184,13 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
   void note_chargebox_seen_(uint8_t address);
+  ChargeboxSlot *find_chargebox_slot_by_address_(uint8_t address);
+  ChargeboxSlot *find_chargebox_slot_by_serial_(const std::string &serial);
+  ChargeboxSlot *ensure_chargebox_slot_(uint8_t address);
+  uint8_t allocate_chargebox_address_(const std::string &serial, uint8_t requested_address);
+  bool is_primary_chargebox_(uint8_t address) const;
+  void send_initial_sync_to_chargebox_(uint8_t address);
+  void handle_secondary_frame_(const Frame &frame);
   void run_startup_sequence_();
   void schedule_startup_step_(uint8_t step, uint32_t delay_ms);
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
@@ -219,6 +237,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   ControlInputs inputs_{};
   EvboxState state_{BOOT};
   uint8_t chargebox_address_{0x00};
+  ChargeboxSlot chargeboxes_[MAX_CHARGEBOXES]{};
   std::string chargebox_serial_{};
   std::string remote_start_card_{"000000AS"};
   uint16_t chargebox_firmware_{0};

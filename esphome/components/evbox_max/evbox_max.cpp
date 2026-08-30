@@ -200,6 +200,13 @@ void EvboxMaxComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  ChargeBox serial: %s", this->chargebox_serial_.c_str());
   ESP_LOGCONFIG(TAG, "  ChargeBox firmware: %u", this->chargebox_firmware_);
   ESP_LOGCONFIG(TAG, "  ChargeBox hardware generation: %u", this->chargebox_hardware_generation_);
+  for (const auto &slot : this->chargeboxes_) {
+    if (slot.assigned) {
+      ESP_LOGCONFIG(TAG, "  Discovered ChargeBox slot %u: address=0x%02X serial=%s firmware=%u hw_gen=%u%s",
+                    slot.address, slot.address, slot.serial.c_str(), slot.firmware, slot.hardware_generation,
+                    slot.address == this->chargebox_address_ ? " primary" : " secondary");
+    }
+  }
   ESP_LOGCONFIG(TAG, "  Protocol profile: %s", this->protocol_profile_name_());
   ESP_LOGCONFIG(TAG, "  Commissioning mode: %s", this->commissioning_mode_ ? "YES" : "NO");
   ESP_LOGCONFIG(TAG, "  Grid phase mapping: %s", this->grid_phase_mapping_name_().c_str());
@@ -441,6 +448,13 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
   // controller state and which follow-up command is sent.
   ESP_LOGD(TAG, "RX EVBox dst=0x%02X src=0x%02X cmd=0x%02X data=%s", frame.dst, frame.src, frame.cmd,
            frame.data.c_str());
+  if (frame.type != FrameType::REGISTRATION && frame.dst == ADDR_CP && frame.src >= 1 && frame.src <= 20) {
+    this->note_chargebox_seen_(frame.src);
+    if (!this->is_primary_chargebox_(frame.src)) {
+      this->handle_secondary_frame_(frame);
+      return;
+    }
+  }
   switch (frame.type) {
     case FrameType::REGISTRATION:
       if (frame.dst != ADDR_CP || frame.data.size() < 7) {
@@ -448,14 +462,46 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
                  static_cast<unsigned>(frame.data.size()));
         break;
       }
-      this->chargebox_serial_ = frame.data.substr(0, 7);
+      {
+      const std::string serial = frame.data.substr(0, 7);
+      uint16_t firmware = 0;
+      uint8_t hardware_generation = 0;
       if (frame.data.size() >= 11) {
-        this->chargebox_firmware_ = static_cast<uint16_t>(std::strtoul(frame.data.substr(7, 4).c_str(), nullptr, 10));
+        firmware = static_cast<uint16_t>(std::strtoul(frame.data.substr(7, 4).c_str(), nullptr, 10));
       }
       if (frame.data.size() >= 15) {
-        this->chargebox_hardware_generation_ = static_cast<uint8_t>(std::strtoul(frame.data.substr(11, 4).c_str(), nullptr, 10));
+        hardware_generation = static_cast<uint8_t>(std::strtoul(frame.data.substr(11, 4).c_str(), nullptr, 10));
       }
-      this->chargebox_address_ = frame.src == 0 ? 1 : frame.src;
+      const uint8_t requested_address = frame.src == 0 ? 0 : frame.src;
+      const uint8_t assigned_address = this->allocate_chargebox_address_(serial, requested_address);
+      if (assigned_address == 0) {
+        ESP_LOGW(TAG, "CB registration serial=%s ignored: no free EVBox slot/address available", serial.c_str());
+        break;
+      }
+      auto *slot = this->find_chargebox_slot_by_address_(assigned_address);
+      if (slot != nullptr) {
+        slot->serial = serial;
+        slot->firmware = firmware;
+        slot->hardware_generation = hardware_generation;
+        slot->last_seen_ms = millis();
+        slot->assigned = true;
+      }
+      const bool primary_assigned_now = this->chargebox_address_ == 0;
+      if (primary_assigned_now) {
+        this->chargebox_address_ = assigned_address;
+        this->chargebox_serial_ = serial;
+        this->chargebox_firmware_ = firmware;
+        this->chargebox_hardware_generation_ = hardware_generation;
+      }
+      ESP_LOGI(TAG, "CB registration serial=%s src=0x%02X assigned=0x%02X slot=%u%s firmware=%u hw_gen=%u profile=%s",
+               serial.c_str(), frame.src, assigned_address, assigned_address,
+               assigned_address == this->chargebox_address_ ? " primary" : " secondary", firmware,
+               hardware_generation, this->protocol_profile_name_());
+      this->send_packet_(ADDR_BROADCAST, 0x11, serial + hex_byte(assigned_address) + "03");
+      if (!this->is_primary_chargebox_(assigned_address)) {
+        this->send_initial_sync_to_chargebox_(assigned_address);
+        break;
+      }
       this->startup_config_received_ = false;
       this->known_good_meter_config_restore_attempted_ = false;
       this->known_good_meter_config_verified_ = false;
@@ -464,13 +510,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->remote_start_config_write_attempted_ = false;
       this->remote_start_config_verified_ = false;
       this->last_startup_sync_request_ms_ = millis();
-      ESP_LOGI(TAG, "CB registration serial=%s assign=0x%02X firmware=%u hw_gen=%u profile=%s",
-               this->chargebox_serial_.c_str(), this->chargebox_address_, this->chargebox_firmware_,
-               this->chargebox_hardware_generation_, this->protocol_profile_name_());
       this->transition_(ASSIGN_ADDRESS);
-      this->send_packet_(ADDR_BROADCAST, 0x11, this->chargebox_serial_ + hex_byte(this->chargebox_address_) + "03");
       this->transition_(READ_INFO);
       this->schedule_startup_step_(1, 300);
+      }
       break;
     case FrameType::INFO_RESPONSE:
       this->update_meter_info_(frame.data);
@@ -1373,7 +1416,19 @@ void EvboxMaxComponent::update_relays_() {
 void EvboxMaxComponent::note_chargebox_seen_(uint8_t address) {
   if (address == 0 || address > 20) return;
   const bool first_seen_after_boot = this->chargebox_address_ == 0;
-  this->chargebox_address_ = address;
+  auto *slot = this->ensure_chargebox_slot_(address);
+  if (slot != nullptr) {
+    slot->last_seen_ms = millis();
+  }
+  if (first_seen_after_boot) {
+    this->chargebox_address_ = address;
+    ESP_LOGI(TAG, "Primary ChargeBox selected from live frame: 0x%02X", address);
+  }
+  if (!this->is_primary_chargebox_(address)) {
+    ESP_LOGD(TAG, "Secondary ChargeBox 0x%02X live frame seen; primary remains 0x%02X",
+             address, this->chargebox_address_);
+    return;
+  }
   if (!this->startup_config_received_ && this->startup_step_ == 0 &&
       (this->last_startup_sync_request_ms_ == 0 || millis() - this->last_startup_sync_request_ms_ >= 10000UL)) {
     ESP_LOGI(TAG, "%s at 0x%02X; running startup sync",
@@ -1707,6 +1762,123 @@ void EvboxMaxComponent::apply_current_limit_now_(const char *reason) {
   if (delta < 0.0f) delta = -delta;
   if ((this->active_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
     this->send_current_setpoint_(commanded_current);
+  }
+}
+
+EvboxMaxComponent::ChargeboxSlot *EvboxMaxComponent::find_chargebox_slot_by_address_(uint8_t address) {
+  if (address == 0) return nullptr;
+  for (auto &slot : this->chargeboxes_) {
+    if (slot.assigned && slot.address == address) return &slot;
+  }
+  return nullptr;
+}
+
+EvboxMaxComponent::ChargeboxSlot *EvboxMaxComponent::find_chargebox_slot_by_serial_(const std::string &serial) {
+  if (serial.empty()) return nullptr;
+  for (auto &slot : this->chargeboxes_) {
+    if (slot.assigned && slot.serial == serial) return &slot;
+  }
+  return nullptr;
+}
+
+EvboxMaxComponent::ChargeboxSlot *EvboxMaxComponent::ensure_chargebox_slot_(uint8_t address) {
+  if (address == 0 || address > MAX_CHARGEBOXES) return nullptr;
+  if (auto *slot = this->find_chargebox_slot_by_address_(address)) return slot;
+  for (auto &slot : this->chargeboxes_) {
+    if (!slot.assigned) {
+      slot.address = address;
+      slot.assigned = true;
+      return &slot;
+    }
+  }
+  return nullptr;
+}
+
+uint8_t EvboxMaxComponent::allocate_chargebox_address_(const std::string &serial, uint8_t requested_address) {
+  if (auto *known = this->find_chargebox_slot_by_serial_(serial)) {
+    return known->address;
+  }
+  if (requested_address >= 1 && requested_address <= MAX_CHARGEBOXES &&
+      this->find_chargebox_slot_by_address_(requested_address) == nullptr) {
+    auto *slot = this->ensure_chargebox_slot_(requested_address);
+    if (slot != nullptr) return requested_address;
+  }
+  for (uint8_t address = 1; address <= MAX_CHARGEBOXES; address++) {
+    if (this->find_chargebox_slot_by_address_(address) == nullptr) {
+      auto *slot = this->ensure_chargebox_slot_(address);
+      if (slot != nullptr) return address;
+    }
+  }
+  return 0;
+}
+
+bool EvboxMaxComponent::is_primary_chargebox_(uint8_t address) const {
+  return this->chargebox_address_ != 0 && address == this->chargebox_address_;
+}
+
+void EvboxMaxComponent::send_initial_sync_to_chargebox_(uint8_t address) {
+  if (address == 0) return;
+  ESP_LOGI(TAG, "Sending passive startup sync to secondary CB 0x%02X", address);
+  this->send_packet_(ADDR_BROADCAST, 0x1B, "0000038400");
+  this->send_packet_(address, 0x1B, "0000038400");
+  this->send_packet_(address, 0x1C, "01");
+  this->send_packet_(address, 0x65, "000F");
+  this->send_packet_(address, 0x18, "02");
+}
+
+void EvboxMaxComponent::handle_secondary_frame_(const Frame &frame) {
+  const uint8_t address = frame.src;
+  switch (frame.type) {
+    case FrameType::HEARTBEAT:
+      ESP_LOGI(TAG, "Secondary CB 0x%02X heartbeat; sending ACK", address);
+      this->send_packet_(address, 0x21, "");
+      break;
+    case FrameType::AUTHENTICATE_CARD: {
+      const uint8_t card_len = parse_hex_byte(frame.data, 2);
+      const size_t available = frame.data.size() > 4 ? frame.data.size() - 4 : 0;
+      const size_t safe_len = std::min<size_t>(card_len, available);
+      const std::string card = frame.data.substr(4, safe_len);
+      const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
+      ESP_LOGW(TAG, "Secondary CB 0x%02X cmd22 card=%s denied; multi-charge control not enabled yet",
+               address, card.c_str());
+      this->send_packet_(address, 0x22, hex_byte(0x12) + hex_byte(card_len) + padded_card + "FFFF");
+      break;
+    }
+    case FrameType::CURRENT_REQUEST: {
+      const uint8_t request_code = parse_hex_byte(frame.data, 0);
+      ESP_LOGI(TAG, "Secondary CB 0x%02X cmd6A state=0x%02X %s; ACK only",
+               address, request_code, this->current_request_name_(request_code));
+      this->send_packet_(address, 0x6A, hex_word(ACK));
+      break;
+    }
+    case FrameType::STATE_UPDATE: {
+      const uint8_t code = parse_hex_byte(frame.data, 0);
+      const uint8_t is_charging = parse_hex_byte(frame.data, 6);
+      const uint8_t lock_state = parse_hex_byte(frame.data, 10);
+      const uint8_t cable_current = parse_hex_byte(frame.data, 12);
+      ESP_LOGI(TAG, "Secondary CB 0x%02X cmd26 status=0x%02X %s charging=%u lock=%u cable=%uA len=%u",
+               address, code, this->cb_status_name_(code), is_charging, lock_state, cable_current,
+               static_cast<unsigned>(frame.data.size()));
+      const std::string ack_data = frame.data.size() >= 264 ? std::string("0000000000000000") : std::string("00000000");
+      this->send_packet_(address, 0x26, ack_data);
+      break;
+    }
+    case FrameType::METERING_START:
+      ESP_LOGW(TAG, "Secondary CB 0x%02X cmd23 metering start rejected/passive; multi-charge control not enabled yet",
+               address);
+      this->send_packet_(address, 0x23, "120000000000000000");
+      break;
+    case FrameType::METERING_END:
+      ESP_LOGI(TAG, "Secondary CB 0x%02X cmd24 metering end; ACK", address);
+      this->send_packet_(address, 0x24, "01");
+      break;
+    case FrameType::METER_PUSH:
+      ESP_LOGD(TAG, "Secondary CB 0x%02X meter push data=%s", address, frame.data.c_str());
+      this->send_packet_(address, 0x66, "");
+      break;
+    default:
+      ESP_LOGD(TAG, "Secondary CB 0x%02X frame cmd=0x%02X ignored in passive mode", address, frame.cmd);
+      break;
   }
 }
 
