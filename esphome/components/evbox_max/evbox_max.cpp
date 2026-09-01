@@ -390,16 +390,17 @@ void EvboxMaxComponent::start_session() {
   this->pv_pause_hold_logged_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; using CB autostart flow, waiting for cmd22/cmd6A and not sending cmd31");
+  ESP_LOGI(TAG, "Local start requested; sending explicit cmd22 autostart authorization before cmd6B");
+  const bool explicit_authorize_sent = this->send_unsolicited_authorize_card_();
 
   const bool connected_waiting_state =
       this->cb_cable_max_current_ > 0 && this->have_last_current_request_code_ &&
       this->last_current_request_code_ == 0x30;
   if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start while CB is already CONNECTED_WAITING; scheduling cmd6B current release %.1f A",
+    ESP_LOGI(TAG, "Local start while CB is already CONNECTED_WAITING; scheduling cmd6B current release %.1f A after cmd22",
              this->desired_current_);
-    this->schedule_current_release_(100);
+    this->schedule_current_release_(explicit_authorize_sent ? 800 : 100);
     this->transition_(STARTING);
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
     this->finished_reset_pending_ = true;
@@ -410,10 +411,10 @@ void EvboxMaxComponent::start_session() {
     this->transition_(PREPARING);
     return;
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; waiting for CB cmd22/cmd6A");
+    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; cmd22 sent, waiting for CB cmd6A/cmd23");
     this->transition_(STARTING);
   } else {
-    ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
+    ESP_LOGI(TAG, "Start request queued after cmd22 until CB reports PREPARING_G3/cmd6A/cmd23");
     this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
   }
 }
