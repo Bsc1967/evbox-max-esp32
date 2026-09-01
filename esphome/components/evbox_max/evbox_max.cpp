@@ -17,6 +17,7 @@ static constexpr float MIN_CHARGE_CURRENT_A = 6.0f;
 static constexpr uint32_t PV_SURPLUS_START_DELAY_MS = 60000UL;
 static constexpr uint32_t PV_SURPLUS_PAUSE_DELAY_MS = 10000UL;
 static constexpr uint32_t PV_SURPLUS_AVERAGE_WINDOW_MS = 60000UL;
+static constexpr uint32_t AUTH_CURRENT_RELEASE_FALLBACK_MS = 1500UL;
 static const char *const KNOWN_GOOD_METER_CONFIG =
     "00000E10000003840000001E03000001010030FF000000000000000100010000000003E8010000000100";
 
@@ -61,6 +62,7 @@ void EvboxMaxComponent::setup() {
   this->start_requested_ms_ = 0;
   this->start_stall_logged_ = false;
   this->remote_start_sent_ms_ = 0;
+  this->authorize_card_sent_ms_ = 0;
   this->last_cb_status_code_ = 0;
   this->have_last_cb_status_code_ = false;
   this->startup_config_received_ = false;
@@ -721,7 +723,15 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
 
         if (request_code == 0x30) {
           if (this->start_requested_ && !this->current_start_released_ && !this->delayed_current_release_pending_) {
-            ESP_LOGI(TAG, "CB current request CONNECTED_WAITING during active start; waiting for authorized cmd6A before cmd6B");
+            const uint32_t since_auth = this->authorize_card_sent_ms_ == 0 ? 0 : millis() - this->authorize_card_sent_ms_;
+            if (this->authorize_card_sent_ms_ != 0 && since_auth >= AUTH_CURRENT_RELEASE_FALLBACK_MS) {
+              this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+              ESP_LOGW(TAG, "CB still reports CONNECTED_WAITING %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
+                       static_cast<float>(since_auth) / 1000.0f, this->desired_current_);
+              this->schedule_current_release_(200);
+            } else {
+              ESP_LOGI(TAG, "CB current request CONNECTED_WAITING during active start; waiting for authorized cmd6A before cmd6B");
+            }
             this->transition_(STARTING);
           } else {
             ESP_LOGI(TAG, "CB current request WAITING_FOR_CMD26 acknowledged; no cmd6B release needed");
@@ -734,7 +744,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
 
         if (request_code == 0x20) {
           if (this->cb_cable_max_current_ > 0 && this->start_requested_) {
-            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 during active start; cmd6B blocked until cmd6A 0x07/0x37 authorization");
+            const uint32_t since_auth = this->authorize_card_sent_ms_ == 0 ? 0 : millis() - this->authorize_card_sent_ms_;
+            if (this->authorize_card_sent_ms_ != 0 && since_auth >= AUTH_CURRENT_RELEASE_FALLBACK_MS &&
+                !this->current_start_released_ && !this->delayed_current_release_pending_) {
+              this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+              ESP_LOGW(TAG, "CB still reports OBSERVED_PRESTART_20 %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
+                       static_cast<float>(since_auth) / 1000.0f, this->desired_current_);
+              this->schedule_current_release_(200);
+            } else {
+              ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 during active start; waiting briefly after cmd22 before cmd6B fallback");
+            }
             this->transition_(STARTING);
           } else {
             ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 acknowledged; waiting for cable/start request");
@@ -846,7 +865,14 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
               if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x20) {
-                ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; waiting for cmd6A 0x07/0x37 before cmd6B");
+                const uint32_t since_auth = this->authorize_card_sent_ms_ == 0 ? 0 : millis() - this->authorize_card_sent_ms_;
+                if (this->authorize_card_sent_ms_ != 0 && since_auth >= AUTH_CURRENT_RELEASE_FALLBACK_MS) {
+                  ESP_LOGW(TAG, "CB is PREPARING_G3 and still at cmd6A 0x20 %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
+                           static_cast<float>(since_auth) / 1000.0f, this->desired_current_);
+                  this->schedule_current_release_(200);
+                } else {
+                  ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; waiting briefly after cmd22 before cmd6B fallback");
+                }
               } else {
                 ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for CB cmd22/cmd6A");
               }
@@ -1651,6 +1677,7 @@ bool EvboxMaxComponent::send_unsolicited_authorize_card_() {
   ESP_LOGI(TAG, "Sending CP cmd22 autostart authorization card_len=%u card=%s payload=%s",
            static_cast<unsigned>(card_len), card_data.c_str(), payload.c_str());
   this->send_packet_(this->chargebox_address_, 0x22, payload);
+  this->authorize_card_sent_ms_ = millis();
   return true;
 }
 
