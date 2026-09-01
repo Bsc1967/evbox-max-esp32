@@ -18,6 +18,7 @@ static constexpr uint32_t PV_SURPLUS_START_DELAY_MS = 60000UL;
 static constexpr uint32_t PV_SURPLUS_PAUSE_DELAY_MS = 10000UL;
 static constexpr uint32_t PV_SURPLUS_AVERAGE_WINDOW_MS = 60000UL;
 static constexpr uint32_t AUTH_CURRENT_RELEASE_FALLBACK_MS = 1500UL;
+static constexpr uint32_t CURRENT_SETPOINT_RESEND_MS = 5000UL;
 static const char *const KNOWN_GOOD_METER_CONFIG =
     "00000E10000003840000001E03000001010030FF000000000000000100010000000003E8010000000100";
 
@@ -141,9 +142,22 @@ void EvboxMaxComponent::loop() {
                                       this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
                                       this->state_ == PAUSED;
       const float commanded_current = this->apply_minimum_current_policy_(this->desired_current_, charge_flow_active);
-      float delta = commanded_current - this->active_current_;
+      float delta = commanded_current - this->commanded_current_;
       if (delta < 0.0f) delta = -delta;
-      if ((this->active_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
+      float returned_delta = 0.0f;
+      bool returned_mismatch = false;
+      if (this->current_limit_returned_ && !std::isnan(this->returned_current_limit_)) {
+        returned_delta = commanded_current - this->returned_current_limit_;
+        if (returned_delta < 0.0f) returned_delta = -returned_delta;
+        returned_mismatch = returned_delta >= 0.5f &&
+                            (this->last_current_setpoint_sent_ms_ == 0 ||
+                             now - this->last_current_setpoint_sent_ms_ >= CURRENT_SETPOINT_RESEND_MS);
+      }
+      if ((this->commanded_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f || returned_mismatch) {
+        if (returned_mismatch) {
+          ESP_LOGW(TAG, "CB returned current %.1f A still differs from commanded %.1f A; resending cmd6B",
+                   this->returned_current_limit_, commanded_current);
+        }
         this->send_current_setpoint_(commanded_current);
       }
     }
@@ -1812,9 +1826,9 @@ void EvboxMaxComponent::apply_current_limit_now_(const char *reason) {
 
   if (this->stop_requested_ || !charge_flow_active || !this->current_setpoint_allowed_()) return;
 
-  float delta = commanded_current - this->active_current_;
+  float delta = commanded_current - this->commanded_current_;
   if (delta < 0.0f) delta = -delta;
-  if ((this->active_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
+  if ((this->commanded_current_ <= 0.0f && commanded_current > 0.0f) || delta >= 0.5f) {
     this->send_current_setpoint_(commanded_current);
   }
 }
@@ -2298,6 +2312,7 @@ void EvboxMaxComponent::send_current_setpoint_(float amps) {
   }
   this->commanded_current_ = amps;
   this->active_current_ = amps;
+  this->last_current_setpoint_sent_ms_ = millis();
   this->current_limit_returned_ = false;
   this->update_ev_measurements_();
   const auto tenths = static_cast<uint16_t>(std::max(0.0f, std::min(32.0f, amps)) * 10.0f);

@@ -351,6 +351,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint8_t last_current_request_code_{0};
   bool have_last_current_request_code_{false};
   uint32_t last_current_request_ms_{0};
+  uint32_t last_current_setpoint_sent_ms_{0};
   uint8_t pending_current_request_code_{0};
   bool pending_current_request_after_config_{false};
   bool delayed_current_release_pending_{false};
