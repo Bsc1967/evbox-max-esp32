@@ -542,9 +542,10 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
       this->log_autostart_config_(frame.data);
       if (this->commissioning_mode_ && frame.data.size() >= 68) {
         const uint8_t allow_remote_start = parse_hex_byte(frame.data, 66, 0xFF);
+        const uint8_t auto_start = parse_hex_byte(frame.data, 54, 0xFF);
         const uint8_t meter_config = parse_hex_byte(frame.data, 30, 0xFF);
         const bool needs_known_good_meter_restore = meter_config != 0x01;
-        const bool needs_remote_start_restore = allow_remote_start == 0x00;
+        const bool needs_remote_start_restore = allow_remote_start == 0x00 || auto_start == 0x00;
         const bool needs_serial_meter_restore = meter_config != 0x01;
         if (needs_known_good_meter_restore) {
           this->known_good_meter_config_verified_ = false;
@@ -580,12 +581,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               this->remote_start_config_write_attempted_ = true;
             }
           } else if (!this->remote_start_config_verified_) {
-            ESP_LOGW(TAG, "CB remote start flag still not restored after accepted cmd34; remote_start=0x%02X",
-                     allow_remote_start);
+            ESP_LOGW(TAG, "CB autostart/remote-start flags still not restored after accepted cmd34; auto_start=0x%02X remote_start=0x%02X",
+                     auto_start, allow_remote_start);
           }
         } else {
           this->remote_start_config_verified_ = true;
-          ESP_LOGI(TAG, "CB remote start config verified enabled");
+          ESP_LOGI(TAG, "CB autostart and remote start config verified enabled");
         }
       }
       if (this->pending_current_request_after_config_ && !this->stop_requested_ &&
@@ -1615,8 +1616,8 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   }
 
   // cmd34 is not a raw write-back of cmd33. It starts with a field mask and
-  // uses a shifted layout. Only the remote-start flag is written here; meter
-  // type restore is deliberately not attempted until the mapping is proven.
+  // uses a shifted layout. Only the autostart/remote-start flags are written
+  // here; meter type restore is deliberately not attempted until needed.
   std::string request(94, '0');
   const auto copy_field = [&](size_t dst, size_t src, size_t len) {
     if (dst + len <= request.size() && src + len <= config.size()) {
@@ -1641,7 +1642,7 @@ bool EvboxMaxComponent::send_remote_start_config_enable_(const std::string &conf
   request.replace(38, 2, "01");  // auto start card authentication
   request.replace(74, 2, "01");  // allow remote start in cmd34 layout
 
-  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to enable remote start only; meter config is preserved");
+  ESP_LOGW(TAG, "Commissioning mode: sending mapped cmd34 to enable autostart and remote start; meter config is preserved");
   this->send_packet_(this->chargebox_address_, 0x34, request);
   return true;
 }
