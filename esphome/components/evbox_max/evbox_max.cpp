@@ -148,6 +148,7 @@ void EvboxMaxComponent::loop() {
       }
     }
     if (this->start_requested_ && this->current_start_released_ && !this->session_active_ &&
+        this->state_ == STARTING &&
         !this->start_stall_logged_ && this->start_requested_ms_ != 0 &&
         now - this->start_requested_ms_ >= 10000UL) {
       ESP_LOGW(TAG,
@@ -643,8 +644,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         const std::string padded_card = (card + std::string(22, '0')).substr(0, 22);
         this->send_packet_(frame.src, 0x22,
                            hex_byte(access_granted ? 0x01 : 0x12) + hex_byte(card_len) + padded_card + "FFFF");
-        if (access_granted && autostart_card && !this->charge_flow_requested_()) {
-          ESP_LOGI(TAG, "CB autostart card accepted; enabling local charge tracking");
+        if (access_granted && !this->charge_flow_requested_()) {
+          ESP_LOGI(TAG, "CB card authorization accepted; enabling local charge tracking");
           this->start_requested_ = true;
           if (this->start_requested_ms_ == 0) this->start_requested_ms_ = millis();
         }
@@ -744,16 +745,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
 
         if (request_code == 0x20) {
           if (this->cb_cable_max_current_ > 0 && this->start_requested_) {
-            const uint32_t since_auth = this->authorize_card_sent_ms_ == 0 ? 0 : millis() - this->authorize_card_sent_ms_;
-            if (this->authorize_card_sent_ms_ != 0 && since_auth >= AUTH_CURRENT_RELEASE_FALLBACK_MS &&
-                !this->current_start_released_ && !this->delayed_current_release_pending_) {
-              this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-              ESP_LOGW(TAG, "CB still reports OBSERVED_PRESTART_20 %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
-                       static_cast<float>(since_auth) / 1000.0f, this->desired_current_);
-              this->schedule_current_release_(200);
-            } else {
-              ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 during active start; waiting briefly after cmd22 before cmd6B fallback");
-            }
+            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 during active start; ACK only, waiting for CB cmd22 or cmd6A 0x30/0x37");
             this->transition_(STARTING);
           } else {
             ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 acknowledged; waiting for cable/start request");
@@ -864,15 +856,17 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
                          this->current_request_name_(this->last_current_request_code_));
               }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
-              if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x20) {
+              if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30) {
                 const uint32_t since_auth = this->authorize_card_sent_ms_ == 0 ? 0 : millis() - this->authorize_card_sent_ms_;
                 if (this->authorize_card_sent_ms_ != 0 && since_auth >= AUTH_CURRENT_RELEASE_FALLBACK_MS) {
-                  ESP_LOGW(TAG, "CB is PREPARING_G3 and still at cmd6A 0x20 %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
+                  ESP_LOGW(TAG, "CB is PREPARING_G3 and still at cmd6A 0x30 %.1fs after cmd22; scheduling guarded cmd6B fallback %.1f A",
                            static_cast<float>(since_auth) / 1000.0f, this->desired_current_);
                   this->schedule_current_release_(200);
                 } else {
-                  ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; waiting briefly after cmd22 before cmd6B fallback");
+                  ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and CONNECTED_WAITING; waiting briefly after cmd22 before cmd6B fallback");
                 }
+              } else if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x20) {
+                ESP_LOGI(TAG, "CB is PREPARING_G3 with prior OBSERVED_PRESTART_20; ACK only, waiting for CB cmd22 or cmd6A 0x30/0x37");
               } else {
                 ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for CB cmd22/cmd6A");
               }
