@@ -29,6 +29,7 @@ enum EvboxSwitchType : uint8_t {
   EVBOX_SWITCH_START = 0,
   EVBOX_SWITCH_STOP = 1,
   EVBOX_SWITCH_ENABLE_PV_MODE = 2,
+  EVBOX_SWITCH_PAUSE = 3,
 };
 
 class EvboxCurrentNumber : public number::Number, public Component {

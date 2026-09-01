@@ -416,7 +416,16 @@ void EvboxMaxComponent::start_session() {
   const bool connected_waiting_state =
       this->cb_cable_max_current_ > 0 && this->have_last_current_request_code_ &&
       (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0x20);
-  if (connected_waiting_state) {
+  const bool paused_session_state =
+      this->cb_cable_max_current_ > 0 &&
+      (this->state_ == PAUSED || (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x49));
+  if (paused_session_state) {
+    this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+    ESP_LOGI(TAG, "Local start while CB session is paused; resuming with cmd6B current release %.1f A without cmd32",
+             this->desired_current_);
+    this->schedule_current_release_(200);
+    this->transition_(STARTING);
+  } else if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
     ESP_LOGI(TAG, "Local start while CB is already %s; sending cmd22 autostart authorization and waiting for cmd6A 0x07/0x37 before cmd6B",
              this->current_request_name_(this->last_current_request_code_));
@@ -444,6 +453,35 @@ void EvboxMaxComponent::start_session() {
     ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
     this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
   }
+}
+
+void EvboxMaxComponent::pause_session() {
+  this->stop_requested_ = false;
+  this->start_requested_ = false;
+  this->finished_reset_pending_ = false;
+  this->delayed_start_trigger_pending_ = false;
+  this->delayed_current_release_pending_ = false;
+  this->remote_start_pending_ = false;
+  this->start_requested_ms_ = 0;
+  this->start_stall_logged_ = false;
+  this->pv_pause_active_ = true;
+  this->pv_surplus_ready_since_ms_ = 0;
+  this->pv_surplus_low_since_ms_ = 0;
+  this->pv_pause_hold_logged_ = false;
+  this->pv_status_ = "USER_PAUSED";
+  this->limit_reason_ = "USER_PAUSE";
+  const bool charge_flow_active = this->session_active_ || this->state_ == STARTING ||
+                                  this->state_ == SESSION_STARTING || this->state_ == CHARGING ||
+                                  this->state_ == PAUSED || this->commanded_current_ > 0.0f;
+  if (charge_flow_active && this->chargebox_address_ != 0) {
+    ESP_LOGI(TAG, "Local pause requested; suspending charge current with cmd6B 0.0 A without cmd32");
+    this->send_current_setpoint_(0.0f);
+  }
+  this->session_active_ = false;
+  this->current_start_released_ = true;
+  this->returned_current_limit_ = 0.0f;
+  this->current_limit_returned_ = true;
+  this->transition_(PAUSED);
 }
 
 void EvboxMaxComponent::stop_session() {

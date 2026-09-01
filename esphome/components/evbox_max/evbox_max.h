@@ -160,6 +160,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
                       float l3_power_w, bool online);
   void set_pv_enabled(bool enabled);
   void start_session();
+  void pause_session();
   void stop_session();
 
  protected:
