@@ -709,6 +709,16 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         }
 
         if (request_code == 0x37) {
+          const bool can_accept_cb_autostart = !this->stop_requested_ && this->authorization_allowed_() &&
+                                               this->cb_cable_max_current_ > 0;
+          if (!this->start_requested_ && can_accept_cb_autostart) {
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK without active HA start; accepting CB autostart");
+            this->start_requested_ = true;
+            this->start_requested_ms_ = millis();
+            this->remote_start_pending_ = false;
+            this->remote_start_timeout_logged_ = false;
+            this->finished_reset_pending_ = false;
+          }
           if (this->start_requested_ && !this->current_start_released_ && !this->delayed_current_release_pending_) {
             this->desired_current_ = this->controller_.calculate_current(this->inputs_);
             ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; scheduling delayed cmd6B current release %.1f A",
@@ -718,7 +728,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           } else if (this->start_requested_) {
             ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK; current release already scheduled or sent");
           } else {
-            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK without active start request; ACK only");
+            ESP_LOGI(TAG, "CB reports AUTHORIZED_WAIT_LOCK but start is not allowed; ACK only");
           }
           break;
         }
