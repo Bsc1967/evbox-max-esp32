@@ -14,7 +14,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source: github://Bsc1967/evbox-max-esp32@c16ab0db7ee7f0df20a2d518400931a814391c37
+  - source: github://Bsc1967/evbox-max-esp32@3cb7b873fe0ae274df45fba5aed1c7f430c5e370
     refresh: 0s
     components:
       - evbox_max
@@ -339,6 +339,12 @@ switch:
     evbox_max_id: evbox
     type: START
     name: Start Charging
+    restore_mode: ALWAYS_OFF
+
+  - platform: evbox_max
+    evbox_max_id: evbox
+    type: PAUSE
+    name: Pause Charging
     restore_mode: ALWAYS_OFF
 
   - platform: evbox_max
