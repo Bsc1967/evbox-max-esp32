@@ -225,24 +225,29 @@ void EvboxMaxComponent::set_failsafe_mode(FailsafeMode mode) {
 }
 
 void EvboxMaxComponent::set_max_current(float current) {
-  const float group_limit = std::max(0.0f, this->inputs_.charger_breaker_current);
-  float bounded = std::max(0.0f, current);
-  if (bounded > 0.0f && bounded < MIN_CHARGE_CURRENT_A) bounded = MIN_CHARGE_CURRENT_A;
+  const float group_limit = std::max(MIN_CHARGE_CURRENT_A, this->inputs_.charger_breaker_current);
+  float bounded = std::max(MIN_CHARGE_CURRENT_A, current);
   this->inputs_.max_current = std::min(bounded, group_limit);
   if (this->inputs_.manual_current > this->inputs_.max_current) {
     this->inputs_.manual_current = this->inputs_.max_current;
+  } else if (this->inputs_.manual_current < MIN_CHARGE_CURRENT_A) {
+    this->inputs_.manual_current = std::min(MIN_CHARGE_CURRENT_A, this->inputs_.max_current);
   }
   this->save_settings_();
   this->apply_current_limit_now_("max current changed");
 }
 
 void EvboxMaxComponent::set_charger_breaker_current(float current) {
-  this->inputs_.charger_breaker_current = std::max(0.0f, std::min(32.0f, current));
+  this->inputs_.charger_breaker_current = std::max(MIN_CHARGE_CURRENT_A, std::min(32.0f, current));
   if (this->inputs_.max_current > this->inputs_.charger_breaker_current) {
     this->inputs_.max_current = this->inputs_.charger_breaker_current;
+  } else if (this->inputs_.max_current < MIN_CHARGE_CURRENT_A) {
+    this->inputs_.max_current = std::min(MIN_CHARGE_CURRENT_A, this->inputs_.charger_breaker_current);
   }
   if (this->inputs_.manual_current > this->inputs_.charger_breaker_current) {
     this->inputs_.manual_current = this->inputs_.charger_breaker_current;
+  } else if (this->inputs_.manual_current < MIN_CHARGE_CURRENT_A) {
+    this->inputs_.manual_current = std::min(MIN_CHARGE_CURRENT_A, this->inputs_.max_current);
   }
   this->save_settings_();
   this->apply_current_limit_now_("group breaker current changed");
@@ -255,10 +260,9 @@ void EvboxMaxComponent::set_main_fuse_current(float current) {
 }
 
 void EvboxMaxComponent::set_manual_current(float current) {
-  const float group_limit = std::max(0.0f, this->inputs_.charger_breaker_current);
+  const float group_limit = std::max(MIN_CHARGE_CURRENT_A, this->inputs_.charger_breaker_current);
   const float upper_limit = std::min(this->inputs_.max_current, group_limit);
-  float bounded = std::max(0.0f, current);
-  if (bounded > 0.0f && bounded < MIN_CHARGE_CURRENT_A) bounded = MIN_CHARGE_CURRENT_A;
+  float bounded = std::max(MIN_CHARGE_CURRENT_A, current);
   this->inputs_.manual_current = std::min(bounded, upper_limit);
   this->save_settings_();
   this->apply_current_limit_now_("manual current changed");
@@ -394,11 +398,11 @@ void EvboxMaxComponent::start_session() {
 
   const bool connected_waiting_state =
       this->cb_cable_max_current_ > 0 && this->have_last_current_request_code_ &&
-      this->last_current_request_code_ == 0x30;
+      (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0x20);
   if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start while CB is already CONNECTED_WAITING; scheduling cmd6B current release %.1f A",
-             this->desired_current_);
+    ESP_LOGI(TAG, "Local start while CB is already %s; scheduling cmd6B current release %.1f A",
+             this->current_request_name_(this->last_current_request_code_), this->desired_current_);
     this->schedule_current_release_(100);
     this->transition_(STARTING);
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
@@ -724,6 +728,20 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
           break;
         }
 
+        if (request_code == 0x20) {
+          if (this->cb_cable_max_current_ > 0 && this->start_requested_ &&
+              !this->current_start_released_ && !this->delayed_current_release_pending_) {
+            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
+            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 with cable present and active start; scheduling cmd6B current release %.1f A",
+                     this->desired_current_);
+            this->schedule_current_release_(250);
+            this->transition_(STARTING);
+          } else {
+            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 acknowledged; waiting for cable/start request");
+          }
+          break;
+        }
+
         if (!this->is_supported_current_request_(request_code)) {
           ESP_LOGW(TAG, "CB current request state 0x%02X is not a start-release event; ACK only", request_code);
           break;
@@ -820,14 +838,21 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
             if (this->finished_reset_pending_) {
               this->finished_reset_pending_ = false;
               ESP_LOGI(TAG, "CB returned PREPARING_G3 after 4B reset; continuing CB autostart flow without cmd31");
-              if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x30 &&
+              if (this->have_last_current_request_code_ &&
+                  (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0x20) &&
                   !this->current_start_released_ && !this->delayed_current_release_pending_) {
-                ESP_LOGI(TAG, "CB already reports CONNECTED_WAITING after reset; scheduling cmd6B current release %.1f A",
-                         this->desired_current_);
+                ESP_LOGI(TAG, "CB already reports %s after reset; scheduling cmd6B current release %.1f A",
+                         this->current_request_name_(this->last_current_request_code_), this->desired_current_);
                 this->schedule_current_release_(750);
               }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
-              ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for CB cmd22/cmd6A");
+              if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x20) {
+                ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; scheduling cmd6B current release %.1f A",
+                         this->desired_current_);
+                this->schedule_current_release_(250);
+              } else {
+                ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for CB cmd22/cmd6A");
+              }
             }
             this->transition_(STARTING);
           } else {
@@ -1195,12 +1220,10 @@ void EvboxMaxComponent::apply_settings_(const StoredSettings &settings) {
   this->controller_.set_failsafe_mode(static_cast<FailsafeMode>(settings.failsafe_mode));
   this->controller_.set_failsafe_current(settings.failsafe_current);
   this->inputs_.pv_enabled = settings.pv_enabled;
-  this->inputs_.charger_breaker_current = std::max(0.0f, std::min(32.0f, settings.charger_breaker_current));
-  float restored_max = std::max(0.0f, settings.max_current);
-  if (restored_max > 0.0f && restored_max < MIN_CHARGE_CURRENT_A) restored_max = MIN_CHARGE_CURRENT_A;
+  this->inputs_.charger_breaker_current = std::max(MIN_CHARGE_CURRENT_A, std::min(32.0f, settings.charger_breaker_current));
+  float restored_max = std::max(MIN_CHARGE_CURRENT_A, settings.max_current);
   this->inputs_.max_current = std::min(restored_max, this->inputs_.charger_breaker_current);
-  float restored_manual = std::max(0.0f, settings.manual_current);
-  if (restored_manual > 0.0f && restored_manual < MIN_CHARGE_CURRENT_A) restored_manual = MIN_CHARGE_CURRENT_A;
+  float restored_manual = std::max(MIN_CHARGE_CURRENT_A, settings.manual_current);
   this->inputs_.manual_current = std::min(restored_manual, std::min(this->inputs_.max_current, this->inputs_.charger_breaker_current));
   this->inputs_.main_fuse_current = settings.main_fuse_current;
   this->inputs_.evbox_l1_grid_phase = settings.evbox_l1_grid_phase <= GRID_PHASE_L3 ? settings.evbox_l1_grid_phase : GRID_PHASE_L1;
