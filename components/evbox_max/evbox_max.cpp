@@ -394,17 +394,20 @@ void EvboxMaxComponent::start_session() {
   this->pv_pause_hold_logged_ = false;
   this->start_requested_ = true;
   this->start_requested_ms_ = millis();
-  ESP_LOGI(TAG, "Local start requested; using CB autostart flow, waiting for cmd22/cmd6A and not sending cmd31");
+  ESP_LOGI(TAG, "Local start requested; authorizing autostart card first, then waiting for CB cmd6A before cmd6B");
 
   const bool connected_waiting_state =
       this->cb_cable_max_current_ > 0 && this->have_last_current_request_code_ &&
       (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0x20);
   if (connected_waiting_state) {
     this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-    ESP_LOGI(TAG, "Local start while CB is already %s; scheduling cmd6B current release %.1f A",
-             this->current_request_name_(this->last_current_request_code_), this->desired_current_);
-    this->schedule_current_release_(100);
-    this->transition_(STARTING);
+    ESP_LOGI(TAG, "Local start while CB is already %s; sending cmd22 autostart authorization and waiting for cmd6A 0x07/0x37 before cmd6B",
+             this->current_request_name_(this->last_current_request_code_));
+    if (this->send_unsolicited_authorize_card_()) {
+      this->transition_(AUTHORIZED);
+    } else {
+      this->transition_(STARTING);
+    }
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x4B && this->cb_cable_max_current_ > 0) {
     this->finished_reset_pending_ = true;
     this->remote_start_blocked_ = false;
@@ -414,8 +417,12 @@ void EvboxMaxComponent::start_session() {
     this->transition_(PREPARING);
     return;
   } else if (this->have_last_cb_status_code_ && this->last_cb_status_code_ == 0x47) {
-    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; waiting for CB cmd22/cmd6A");
-    this->transition_(STARTING);
+    ESP_LOGI(TAG, "Local start while CB is PREPARING_G3; sending cmd22 autostart authorization and waiting for CB cmd6A");
+    if (this->send_unsolicited_authorize_card_()) {
+      this->transition_(AUTHORIZED);
+    } else {
+      this->transition_(STARTING);
+    }
   } else {
     ESP_LOGI(TAG, "Start request queued until CB reports PREPARING_G3/cmd22/cmd23");
     this->transition_(this->cb_cable_max_current_ > 0 ? PREPARING : IDLE);
@@ -714,10 +721,7 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
 
         if (request_code == 0x30) {
           if (this->start_requested_ && !this->current_start_released_ && !this->delayed_current_release_pending_) {
-            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-            ESP_LOGI(TAG, "CB current request CONNECTED_WAITING with active start; scheduling cmd6B current release %.1f A",
-                     this->desired_current_);
-            this->schedule_current_release_(100);
+            ESP_LOGI(TAG, "CB current request CONNECTED_WAITING during active start; waiting for authorized cmd6A before cmd6B");
             this->transition_(STARTING);
           } else {
             ESP_LOGI(TAG, "CB current request WAITING_FOR_CMD26 acknowledged; no cmd6B release needed");
@@ -729,12 +733,8 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
         }
 
         if (request_code == 0x20) {
-          if (this->cb_cable_max_current_ > 0 && this->start_requested_ &&
-              !this->current_start_released_ && !this->delayed_current_release_pending_) {
-            this->desired_current_ = this->controller_.calculate_current(this->inputs_);
-            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 with cable present and active start; scheduling cmd6B current release %.1f A",
-                     this->desired_current_);
-            this->schedule_current_release_(250);
+          if (this->cb_cable_max_current_ > 0 && this->start_requested_) {
+            ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 during active start; cmd6B blocked until cmd6A 0x07/0x37 authorization");
             this->transition_(STARTING);
           } else {
             ESP_LOGI(TAG, "CB current request OBSERVED_PRESTART_20 acknowledged; waiting for cable/start request");
@@ -841,15 +841,12 @@ void EvboxMaxComponent::handle_frame_(const Frame &frame) {
               if (this->have_last_current_request_code_ &&
                   (this->last_current_request_code_ == 0x30 || this->last_current_request_code_ == 0x20) &&
                   !this->current_start_released_ && !this->delayed_current_release_pending_) {
-                ESP_LOGI(TAG, "CB already reports %s after reset; scheduling cmd6B current release %.1f A",
-                         this->current_request_name_(this->last_current_request_code_), this->desired_current_);
-                this->schedule_current_release_(750);
+                ESP_LOGI(TAG, "CB already reports %s after reset; waiting for authorized cmd6A before cmd6B",
+                         this->current_request_name_(this->last_current_request_code_));
               }
             } else if (!this->current_start_released_ && !this->delayed_current_release_pending_) {
               if (this->have_last_current_request_code_ && this->last_current_request_code_ == 0x20) {
-                ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; scheduling cmd6B current release %.1f A",
-                         this->desired_current_);
-                this->schedule_current_release_(250);
+                ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start and prior OBSERVED_PRESTART_20; waiting for cmd6A 0x07/0x37 before cmd6B");
               } else {
                 ESP_LOGI(TAG, "CB is PREPARING_G3 with queued start request; waiting for CB cmd22/cmd6A");
               }
@@ -1651,7 +1648,7 @@ bool EvboxMaxComponent::send_unsolicited_authorize_card_() {
   const uint8_t card_len = static_cast<uint8_t>(std::min<size_t>(card.size(), 22));
   const std::string card_data = (card.substr(0, 22) + std::string(22, '0')).substr(0, 22);
   const std::string payload = hex_byte(0x01) + hex_byte(card_len) + card_data + "FFFF";
-  ESP_LOGW(TAG, "Sending unsolicited cmd22 authorize card_len=%u card=%s payload=%s",
+  ESP_LOGI(TAG, "Sending CP cmd22 autostart authorization card_len=%u card=%s payload=%s",
            static_cast<unsigned>(card_len), card_data.c_str(), payload.c_str());
   this->send_packet_(this->chargebox_address_, 0x22, payload);
   return true;
