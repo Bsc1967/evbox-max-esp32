@@ -13,6 +13,7 @@ SWITCH_TYPES = {
     "START": EvboxSwitchType.EVBOX_SWITCH_START,
     "STOP": EvboxSwitchType.EVBOX_SWITCH_STOP,
     "ENABLE_PV_MODE": EvboxSwitchType.EVBOX_SWITCH_ENABLE_PV_MODE,
+    "PAUSE": EvboxSwitchType.EVBOX_SWITCH_PAUSE,
 }
 
 CONFIG_SCHEMA = switch.switch_schema(EvboxCommandSwitch).extend(

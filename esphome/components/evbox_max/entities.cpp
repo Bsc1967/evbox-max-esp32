@@ -146,6 +146,9 @@ void EvboxCommandSwitch::write_state(bool state) {
         this->parent_->set_pv_enabled(true);
         this->publish_state(true);
         return;
+      case EVBOX_SWITCH_PAUSE:
+        this->parent_->pause_session();
+        break;
     }
   } else if (this->type_ == EVBOX_SWITCH_ENABLE_PV_MODE) {
     this->parent_->set_pv_enabled(false);

@@ -130,15 +130,42 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void set_cb_lock_state_sensor(sensor::Sensor *sensor) { this->cb_lock_state_sensor_ = sensor; }
   void set_cable_max_current_sensor(sensor::Sensor *sensor) { this->cable_max_current_sensor_ = sensor; }
   void set_raw_meter_wh_sensor(sensor::Sensor *sensor) { this->raw_meter_wh_sensor_ = sensor; }
+  void set_chargebox_summary_text_sensor(uint8_t index, text_sensor::TextSensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_summary_text_sensors_[index] = sensor;
+  }
+  void set_chargebox_serial_text_sensor(uint8_t index, text_sensor::TextSensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_serial_text_sensors_[index] = sensor;
+  }
+  void set_chargebox_status_text_sensor(uint8_t index, text_sensor::TextSensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_status_text_sensors_[index] = sensor;
+  }
+  void set_chargebox_cable_status_text_sensor(uint8_t index, text_sensor::TextSensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_cable_status_text_sensors_[index] = sensor;
+  }
+  void set_chargebox_lock_status_text_sensor(uint8_t index, text_sensor::TextSensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_lock_status_text_sensors_[index] = sensor;
+  }
+  void set_chargebox_l1_voltage_sensor(uint8_t index, sensor::Sensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_l1_voltage_sensors_[index] = sensor;
+  }
+  void set_chargebox_l1_current_sensor(uint8_t index, sensor::Sensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_l1_current_sensors_[index] = sensor;
+  }
+  void set_chargebox_meter_value_sensor(uint8_t index, sensor::Sensor *sensor) {
+    if (index < MAX_CHARGEBOXES) this->chargebox_meter_value_sensors_[index] = sensor;
+  }
 
   void update_janitza(float import_w, float export_w, float l1_current, float l2_current, float l3_current,
                       float l1_voltage, float l2_voltage, float l3_voltage, float l1_power_w, float l2_power_w,
                       float l3_power_w, bool online);
   void set_pv_enabled(bool enabled);
   void start_session();
+  void pause_session();
   void stop_session();
 
  protected:
+  static constexpr uint8_t MAX_CHARGEBOXES = 3;
+
   struct StoredSettings {
     uint32_t magic{0};
     uint16_t version{0};
@@ -153,6 +180,24 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
     uint8_t evbox_l1_grid_phase{GRID_PHASE_L1};
     uint8_t evbox_l2_grid_phase{GRID_PHASE_L2};
     uint8_t evbox_l3_grid_phase{GRID_PHASE_L3};
+  };
+
+  struct ChargeboxSlot {
+    uint8_t address{0};
+    std::string serial{};
+    uint16_t firmware{0};
+    uint8_t hardware_generation{0};
+    uint32_t last_seen_ms{0};
+    uint8_t status_code{0};
+    bool have_status{false};
+    uint8_t is_charging{0};
+    uint8_t lock_state{0};
+    uint8_t cable_current{0};
+    float l1_voltage_v{NAN};
+    float l1_current_a{0.0f};
+    float meter_kwh{NAN};
+    float raw_meter_wh{NAN};
+    bool assigned{false};
   };
 
   void handle_frame_(const Frame &frame);
@@ -173,6 +218,16 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   void setup_output_pin_(GPIOPin *pin);
   void update_relays_();
   void note_chargebox_seen_(uint8_t address);
+  ChargeboxSlot *find_chargebox_slot_by_address_(uint8_t address);
+  ChargeboxSlot *find_chargebox_slot_by_serial_(const std::string &serial);
+  ChargeboxSlot *ensure_chargebox_slot_(uint8_t address);
+  uint8_t allocate_chargebox_address_(const std::string &serial, uint8_t requested_address);
+  bool is_primary_chargebox_(uint8_t address) const;
+  void send_initial_sync_to_chargebox_(uint8_t address);
+  void handle_secondary_frame_(const Frame &frame);
+  void update_chargebox_slot_from_state_(uint8_t address, const std::string &data);
+  void update_chargebox_slot_from_meter_push_(uint8_t address, const std::string &data);
+  void publish_chargebox_slots_();
   void run_startup_sequence_();
   void schedule_startup_step_(uint8_t step, uint32_t delay_ms);
   void send_packet_(uint8_t dst, uint8_t cmd, const std::string &data = {});
@@ -219,6 +274,7 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   ControlInputs inputs_{};
   EvboxState state_{BOOT};
   uint8_t chargebox_address_{0x00};
+  ChargeboxSlot chargeboxes_[MAX_CHARGEBOXES]{};
   std::string chargebox_serial_{};
   std::string remote_start_card_{"000000AS"};
   uint16_t chargebox_firmware_{0};
@@ -290,11 +346,13 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   uint32_t start_requested_ms_{0};
   bool start_stall_logged_{false};
   uint32_t remote_start_sent_ms_{0};
+  uint32_t authorize_card_sent_ms_{0};
   uint8_t last_cb_status_code_{0};
   bool have_last_cb_status_code_{false};
   uint8_t last_current_request_code_{0};
   bool have_last_current_request_code_{false};
   uint32_t last_current_request_ms_{0};
+  uint32_t last_current_setpoint_sent_ms_{0};
   uint8_t pending_current_request_code_{0};
   bool pending_current_request_after_config_{false};
   bool delayed_current_release_pending_{false};
@@ -363,6 +421,14 @@ class EvboxMaxComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *cb_lock_state_sensor_{nullptr};
   sensor::Sensor *cable_max_current_sensor_{nullptr};
   sensor::Sensor *raw_meter_wh_sensor_{nullptr};
+  text_sensor::TextSensor *chargebox_summary_text_sensors_[MAX_CHARGEBOXES]{};
+  text_sensor::TextSensor *chargebox_serial_text_sensors_[MAX_CHARGEBOXES]{};
+  text_sensor::TextSensor *chargebox_status_text_sensors_[MAX_CHARGEBOXES]{};
+  text_sensor::TextSensor *chargebox_cable_status_text_sensors_[MAX_CHARGEBOXES]{};
+  text_sensor::TextSensor *chargebox_lock_status_text_sensors_[MAX_CHARGEBOXES]{};
+  sensor::Sensor *chargebox_l1_voltage_sensors_[MAX_CHARGEBOXES]{};
+  sensor::Sensor *chargebox_l1_current_sensors_[MAX_CHARGEBOXES]{};
+  sensor::Sensor *chargebox_meter_value_sensors_[MAX_CHARGEBOXES]{};
   GPIOPin *rs485_de_pin_{nullptr};
   GPIOPin *relay_evbox_known_pin_{nullptr};
   GPIOPin *relay_janitza_ok_pin_{nullptr};
