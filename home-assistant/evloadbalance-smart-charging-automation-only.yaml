@@ -1,0 +1,147 @@
+alias: EVBox slimme modus op energieverwachting
+description: >
+  Stuurt EV Box 2 op basis van PV-verwachting, nacht/laagtarief en gewenste
+  vertrektijd op werkdagen.
+mode: single
+
+trigger:
+  - platform: time_pattern
+    minutes: "/5"
+  - platform: state
+    entity_id:
+      - sensor.w0vz45gb6p6018810_batterij
+      - sensor.energy_production_today_remaining
+      - sensor.power_production_now
+      - sensor.power_production_next_hour
+      - sensor.energy_current_hour
+      - sensor.energy_next_hour
+      - binary_sensor.ev_laagtarief
+
+condition: []
+
+variables:
+  soc_sensor: sensor.w0vz45gb6p6018810_batterij
+  vertrek_tijd: "06:30"
+  tussenstop_soc: 80
+  doel_soc: 100
+  laadtempo_pct_per_uur: 12
+  min_pv_resterend_kwh: 3
+  min_pv_vermogen_w: 1400
+  min_pv_uur_kwh: 1.2
+  soc: "{{ states(soc_sensor) | float(0) }}"
+  nu_tijd: "{{ now().time() }}"
+  vertrek: >
+    {% set v = today_at(vertrek_tijd) %}
+    {% if now() >= v %}
+      {{ v + timedelta(days=1) }}
+    {% else %}
+      {{ v }}
+    {% endif %}
+  minuten_tot_vertrek: >
+    {{ ((as_datetime(vertrek) - now()).total_seconds() / 60) | round(0) }}
+  benodigde_minuten_tot_doel: >
+    {% set tekort = [doel_soc - soc, 0] | max %}
+    {{ ((tekort / laadtempo_pct_per_uur) * 60) | round(0) }}
+  werkdag_vertrek: "{{ now().isoweekday() in [1, 2, 3, 4, 7] }}"
+  goedkoop_nachtvenster: >
+    {{ nu_tijd >= strptime('23:00', '%H:%M').time()
+       or nu_tijd < strptime('06:30', '%H:%M').time() }}
+  goedkoop: >
+    {{ goedkoop_nachtvenster or is_state('binary_sensor.ev_laagtarief', 'on') }}
+  pv_verwacht: >
+    {% set resterend = states('sensor.energy_production_today_remaining') | float(0) %}
+    {% set vermogen_nu = states('sensor.power_production_now') | float(0) %}
+    {% set vermogen_volgend_uur = states('sensor.power_production_next_hour') | float(0) %}
+    {% set energie_dit_uur = states('sensor.energy_current_hour') | float(0) %}
+    {% set energie_volgend_uur = states('sensor.energy_next_hour') | float(0) %}
+    {{ is_state('sun.sun', 'above_horizon')
+       and (resterend >= min_pv_resterend_kwh
+            or vermogen_nu >= min_pv_vermogen_w
+            or vermogen_volgend_uur >= min_pv_vermogen_w
+            or energie_dit_uur >= min_pv_uur_kwh
+            or energie_volgend_uur >= min_pv_uur_kwh) }}
+  laatste_stuk_starten: >
+    {{ werkdag_vertrek
+       and soc < doel_soc
+       and minuten_tot_vertrek <= benodigde_minuten_tot_doel + 20 }}
+
+action:
+  - choose:
+      - alias: Doordeweeks vlak voor vertrek naar doel laden
+        conditions:
+          - condition: template
+            value_template: "{{ laatste_stuk_starten }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.ev_box_2_enable_pv_mode
+          - service: select.select_option
+            target:
+              entity_id: select.ev_box_2_charge_mode
+            data:
+              option: LOAD_BALANCING
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_box_2_start_charging
+
+      - alias: Nacht/laagtarief laden tot 80 procent
+        conditions:
+          - condition: template
+            value_template: "{{ werkdag_vertrek and goedkoop and soc < tussenstop_soc }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.ev_box_2_enable_pv_mode
+          - service: select.select_option
+            target:
+              entity_id: select.ev_box_2_charge_mode
+            data:
+              option: LOAD_BALANCING
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_box_2_start_charging
+
+      - alias: 80 procent bereikt, wachten tot laatste stuk
+        conditions:
+          - condition: template
+            value_template: "{{ werkdag_vertrek and goedkoop and soc >= tussenstop_soc and soc < doel_soc }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.ev_box_2_enable_pv_mode
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_box_2_pause_charging
+
+      - alias: Overdag PV-surplus gebruiken
+        conditions:
+          - condition: template
+            value_template: "{{ pv_verwacht and soc < doel_soc }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_box_2_enable_pv_mode
+          - service: select.select_option
+            target:
+              entity_id: select.ev_box_2_charge_mode
+            data:
+              option: PV_SURPLUS
+
+      - alias: Doel-SOC bereikt
+        conditions:
+          - condition: template
+            value_template: "{{ soc >= doel_soc }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: switch.ev_box_2_pause_charging
+
+    default:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.ev_box_2_enable_pv_mode
+      - service: select.select_option
+        target:
+          entity_id: select.ev_box_2_charge_mode
+        data:
+          option: LOAD_BALANCING

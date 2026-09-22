@@ -1,0 +1,453 @@
+# EVBox slim laden - Home Assistant package
+#
+# Dit is een package, geen losse automation-editor YAML.
+# Plaats dit bestand bijvoorbeeld als:
+# /config/packages/evloadbalance-smart-charging.yaml
+#
+# Vereist in configuration.yaml:
+# homeassistant:
+#   packages: !include_dir_named packages
+#
+# Gebruikte bestaande entities:
+# - sensor.w0vz45gb6p6018810_batterij
+# - select.ev_box_2_charge_mode
+# - switch.ev_box_2_enable_pv_mode
+# - switch.ev_box_2_start_charging
+# - switch.ev_box_2_pause_charging
+# - number.ev_box_2_max_current
+# - number.ev_box_2_evbox_group_breaker_current
+# - number.ev_box_2_main_fuse_current
+# - Forecast.Solar sensoren:
+#   sensor.energy_production_today_remaining
+#   sensor.power_production_now
+#   sensor.power_production_next_hour
+#   sensor.energy_current_hour
+#   sensor.energy_next_hour
+#
+# Optioneel:
+# - binary_sensor.ev_laagtarief
+
+input_boolean:
+  ev_slim_laden_actief:
+    name: EV slim laden actief
+    icon: mdi:ev-station
+
+input_select:
+  ev_laadstrategie:
+    name: EV laadstrategie
+    icon: mdi:tune-variant
+    options:
+      - Automatisch
+      - Alleen PV
+      - Alleen goedkoop laden
+      - Altijd load balancing
+      - Uit
+    initial: Automatisch
+
+input_datetime:
+  ev_vertrektijd_werkdagen:
+    name: EV vertrektijd werkdagen
+    has_date: false
+    has_time: true
+    initial: "06:30"
+
+  ev_laagtarief_start:
+    name: EV laagtarief start
+    has_date: false
+    has_time: true
+    initial: "23:00"
+
+  ev_laagtarief_einde:
+    name: EV laagtarief einde
+    has_date: false
+    has_time: true
+    initial: "06:30"
+
+input_number:
+  ev_soc_tussenstop:
+    name: EV eerst laden tot
+    min: 50
+    max: 95
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-80
+    initial: 80
+
+  ev_soc_doel_werkdag:
+    name: EV doel-SOC werkdag
+    min: 80
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-charging-100
+    initial: 100
+
+  ev_laadtempo_pct_per_uur:
+    name: EV laadtempo
+    min: 5
+    max: 40
+    step: 1
+    unit_of_measurement: "%/h"
+    icon: mdi:speedometer
+    initial: 12
+
+  ev_laatste_stuk_buffer_min:
+    name: EV buffer voor vertrek
+    min: 0
+    max: 120
+    step: 5
+    unit_of_measurement: min
+    icon: mdi:timer-plus-outline
+    initial: 20
+
+  ev_min_pv_verwachting_kwh:
+    name: EV minimale PV-verwachting
+    min: 0
+    max: 50
+    step: 0.5
+    unit_of_measurement: kWh
+    icon: mdi:solar-power
+    initial: 3
+
+  ev_min_pv_vermogen_w:
+    name: EV minimale PV-productie
+    min: 0
+    max: 10000
+    step: 100
+    unit_of_measurement: W
+    icon: mdi:solar-power-variant
+    initial: 1400
+
+  ev_min_pv_uur_kwh:
+    name: EV minimale PV-opbrengst per uur
+    min: 0
+    max: 10
+    step: 0.1
+    unit_of_measurement: kWh
+    icon: mdi:solar-panel
+    initial: 1.2
+
+  ev_max_stroom_load_balancing:
+    name: EV max stroom load balancing
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:current-ac
+    initial: 16
+
+  ev_max_stroom_nacht:
+    name: EV max stroom nacht/laagtarief
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:weather-night
+    initial: 16
+
+  ev_max_stroom_laatste_stuk:
+    name: EV max stroom laatste stuk
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:battery-charging-high
+    initial: 16
+
+  ev_max_stroom_pv:
+    name: EV max stroom PV-surplus
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:solar-power-variant-outline
+    initial: 16
+
+  ev_groepzekering_stroom:
+    name: EVBox groepzekering
+    min: 6
+    max: 32
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:fuse
+    initial: 16
+
+  ev_hoofdzekering_stroom:
+    name: EV hoofdzekering
+    min: 16
+    max: 80
+    step: 1
+    unit_of_measurement: A
+    icon: mdi:fuse-alert
+    initial: 25
+
+template:
+  - binary_sensor:
+      - name: EV goedkoop laadvenster
+        unique_id: ev_goedkoop_laadvenster
+        icon: mdi:weather-night
+        state: >
+          {% set start = today_at(states('input_datetime.ev_laagtarief_start')) %}
+          {% set einde = today_at(states('input_datetime.ev_laagtarief_einde')) %}
+          {% if einde <= start %}
+            {% set einde = einde + timedelta(days=1) %}
+            {% if now() < start %}
+              {% set start = start - timedelta(days=1) %}
+              {% set einde = einde - timedelta(days=1) %}
+            {% endif %}
+          {% endif %}
+          {{ start <= now() < einde }}
+
+      - name: EV werkdag vertrek actief
+        unique_id: ev_werkdag_vertrek_actief
+        icon: mdi:calendar-clock
+        state: >
+          {% set vertrek = today_at(states('input_datetime.ev_vertrektijd_werkdagen')) %}
+          {% if now() >= vertrek %}
+            {% set vertrek = vertrek + timedelta(days=1) %}
+          {% endif %}
+          {{ vertrek.isoweekday() <= 5 }}
+
+      - name: EV PV verwacht
+        unique_id: ev_pv_verwacht
+        icon: mdi:solar-power-variant
+        state: >
+          {% set resterend = states('sensor.energy_production_today_remaining') | float(0) %}
+          {% set vermogen_nu = states('sensor.power_production_now') | float(0) %}
+          {% set vermogen_volgend_uur = states('sensor.power_production_next_hour') | float(0) %}
+          {% set energie_dit_uur = states('sensor.energy_current_hour') | float(0) %}
+          {% set energie_volgend_uur = states('sensor.energy_next_hour') | float(0) %}
+          {% set min_kwh = states('input_number.ev_min_pv_verwachting_kwh') | float(3) %}
+          {% set min_w = states('input_number.ev_min_pv_vermogen_w') | float(1400) %}
+          {% set min_uur_kwh = states('input_number.ev_min_pv_uur_kwh') | float(1.2) %}
+          {{ is_state('sun.sun', 'above_horizon')
+             and (resterend >= min_kwh
+                  or vermogen_nu >= min_w
+                  or vermogen_volgend_uur >= min_w
+                  or energie_dit_uur >= min_uur_kwh
+                  or energie_volgend_uur >= min_uur_kwh) }}
+
+  - sensor:
+      - name: EV minuten tot vertrek
+        unique_id: ev_minuten_tot_vertrek
+        icon: mdi:timer-outline
+        unit_of_measurement: min
+        state: >
+          {% set vertrek = today_at(states('input_datetime.ev_vertrektijd_werkdagen')) %}
+          {% if now() >= vertrek %}
+            {% set vertrek = vertrek + timedelta(days=1) %}
+          {% endif %}
+          {{ ((vertrek - now()).total_seconds() / 60) | round(0) }}
+
+      - name: EV benodigde laadtijd tot doel
+        unique_id: ev_benodigde_laadtijd_tot_doel
+        icon: mdi:timer-sand
+        unit_of_measurement: min
+        state: >
+          {% set soc = states('sensor.w0vz45gb6p6018810_batterij') | float(0) %}
+          {% set doel = states('input_number.ev_soc_doel_werkdag') | float(100) %}
+          {% set tempo = states('input_number.ev_laadtempo_pct_per_uur') | float(12) %}
+          {% set tekort = [doel - soc, 0] | max %}
+          {{ ((tekort / tempo) * 60) | round(0) }}
+
+automation:
+  - id: evbox_slim_laden_configuratiegestuurd
+    alias: EVBox slim laden configuratiegestuurd
+    mode: restart
+    trigger:
+      - platform: time_pattern
+        minutes: "/5"
+      - platform: state
+        entity_id:
+          - input_boolean.ev_slim_laden_actief
+          - input_select.ev_laadstrategie
+          - input_datetime.ev_vertrektijd_werkdagen
+          - input_datetime.ev_laagtarief_start
+          - input_datetime.ev_laagtarief_einde
+          - input_number.ev_soc_tussenstop
+          - input_number.ev_soc_doel_werkdag
+          - input_number.ev_laadtempo_pct_per_uur
+          - input_number.ev_laatste_stuk_buffer_min
+          - input_number.ev_min_pv_verwachting_kwh
+          - input_number.ev_min_pv_vermogen_w
+          - input_number.ev_min_pv_uur_kwh
+          - input_number.ev_max_stroom_load_balancing
+          - input_number.ev_max_stroom_nacht
+          - input_number.ev_max_stroom_laatste_stuk
+          - input_number.ev_max_stroom_pv
+          - input_number.ev_groepzekering_stroom
+          - input_number.ev_hoofdzekering_stroom
+          - sensor.w0vz45gb6p6018810_batterij
+          - sensor.energy_production_today_remaining
+          - sensor.power_production_now
+          - sensor.power_production_next_hour
+          - sensor.energy_current_hour
+          - sensor.energy_next_hour
+          - binary_sensor.ev_laagtarief
+    action:
+      - variables:
+          strategie: "{{ states('input_select.ev_laadstrategie') }}"
+          soc: "{{ states('sensor.w0vz45gb6p6018810_batterij') | float(0) }}"
+          tussenstop: "{{ states('input_number.ev_soc_tussenstop') | float(80) }}"
+          doel: "{{ states('input_number.ev_soc_doel_werkdag') | float(100) }}"
+          minuten_tot_vertrek: "{{ states('sensor.ev_minuten_tot_vertrek') | float(9999) }}"
+          benodigde_minuten: "{{ states('sensor.ev_benodigde_laadtijd_tot_doel') | float(0) }}"
+          buffer_min: "{{ states('input_number.ev_laatste_stuk_buffer_min') | float(20) }}"
+          werkdag_vertrek: "{{ is_state('binary_sensor.ev_werkdag_vertrek_actief', 'on') }}"
+          goedkoop: "{{ is_state('binary_sensor.ev_goedkoop_laadvenster', 'on') or is_state('binary_sensor.ev_laagtarief', 'on') }}"
+          pv_verwacht: "{{ is_state('binary_sensor.ev_pv_verwacht', 'on') }}"
+          laatste_stuk_starten: "{{ werkdag_vertrek and soc < doel and minuten_tot_vertrek <= benodigde_minuten + buffer_min }}"
+          stroom_load_balancing: "{{ states('input_number.ev_max_stroom_load_balancing') | float(16) }}"
+          stroom_nacht: "{{ states('input_number.ev_max_stroom_nacht') | float(16) }}"
+          stroom_laatste_stuk: "{{ states('input_number.ev_max_stroom_laatste_stuk') | float(16) }}"
+          stroom_pv: "{{ states('input_number.ev_max_stroom_pv') | float(16) }}"
+          groepzekering: "{{ states('input_number.ev_groepzekering_stroom') | float(16) }}"
+          hoofdzekering: "{{ states('input_number.ev_hoofdzekering_stroom') | float(25) }}"
+
+      - service: number.set_value
+        target:
+          entity_id: number.ev_box_2_evbox_group_breaker_current
+        data:
+          value: "{{ groepzekering }}"
+
+      - service: number.set_value
+        target:
+          entity_id: number.ev_box_2_main_fuse_current
+        data:
+          value: "{{ hoofdzekering }}"
+
+      - choose:
+          - alias: Slim laden uit
+            conditions:
+              - condition: template
+                value_template: "{{ is_state('input_boolean.ev_slim_laden_actief', 'off') or strategie == 'Uit' }}"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: select.select_option
+                target:
+                  entity_id: select.ev_box_2_charge_mode
+                data:
+                  option: DISABLED
+
+          - alias: Doel-SOC bereikt
+            conditions:
+              - condition: template
+                value_template: "{{ soc >= doel }}"
+            sequence:
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_pause_charging
+
+          - alias: Altijd load balancing
+            conditions:
+              - condition: template
+                value_template: "{{ strategie == 'Altijd load balancing' }}"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: number.set_value
+                target:
+                  entity_id: number.ev_box_2_max_current
+                data:
+                  value: "{{ stroom_load_balancing }}"
+              - service: select.select_option
+                target:
+                  entity_id: select.ev_box_2_charge_mode
+                data:
+                  option: LOAD_BALANCING
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_start_charging
+
+          - alias: Doordeweeks vlak voor vertrek laatste stuk laden
+            conditions:
+              - condition: template
+                value_template: "{{ strategie in ['Automatisch', 'Alleen goedkoop laden'] and laatste_stuk_starten }}"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: number.set_value
+                target:
+                  entity_id: number.ev_box_2_max_current
+                data:
+                  value: "{{ stroom_laatste_stuk }}"
+              - service: select.select_option
+                target:
+                  entity_id: select.ev_box_2_charge_mode
+                data:
+                  option: LOAD_BALANCING
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_start_charging
+
+          - alias: Nacht/laagtarief laden tot tussenstop
+            conditions:
+              - condition: template
+                value_template: "{{ strategie in ['Automatisch', 'Alleen goedkoop laden'] and werkdag_vertrek and goedkoop and soc < tussenstop }}"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: number.set_value
+                target:
+                  entity_id: number.ev_box_2_max_current
+                data:
+                  value: "{{ stroom_nacht }}"
+              - service: select.select_option
+                target:
+                  entity_id: select.ev_box_2_charge_mode
+                data:
+                  option: LOAD_BALANCING
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_start_charging
+
+          - alias: Tussenstop bereikt, wachten tot laatste stuk
+            conditions:
+              - condition: template
+                value_template: "{{ strategie in ['Automatisch', 'Alleen goedkoop laden'] and werkdag_vertrek and soc >= tussenstop and soc < doel and not laatste_stuk_starten }}"
+            sequence:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_pause_charging
+
+          - alias: Overdag PV-surplus gebruiken
+            conditions:
+              - condition: template
+                value_template: "{{ strategie in ['Automatisch', 'Alleen PV'] and pv_verwacht and soc < doel }}"
+            sequence:
+              - service: number.set_value
+                target:
+                  entity_id: number.ev_box_2_max_current
+                data:
+                  value: "{{ stroom_pv }}"
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.ev_box_2_enable_pv_mode
+              - service: select.select_option
+                target:
+                  entity_id: select.ev_box_2_charge_mode
+                data:
+                  option: PV_SURPLUS
+
+        default:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.ev_box_2_enable_pv_mode
+          - service: number.set_value
+            target:
+              entity_id: number.ev_box_2_max_current
+            data:
+              value: "{{ stroom_load_balancing }}"
+          - service: select.select_option
+            target:
+              entity_id: select.ev_box_2_charge_mode
+            data:
+              option: LOAD_BALANCING

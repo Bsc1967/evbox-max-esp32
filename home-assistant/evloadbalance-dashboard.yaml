@@ -10,7 +10,7 @@ views:
         cards:
           - type: gauge
             name: Gestuurd
-            entity: sensor.auto_evbox_evbox_commanded_current
+            entity: sensor.ev_box_2_evbox_commanded_current
             min: 0
             max: 16
             severity:
@@ -19,7 +19,7 @@ views:
               red: 16
           - type: gauge
             name: Actueel EV
-            entity: sensor.auto_evbox_evbox_current
+            entity: sensor.ev_box_2_evbox_current
             min: 0
             max: 16
             severity:
@@ -28,7 +28,7 @@ views:
               red: 16
           - type: gauge
             name: PV beschikbaar
-            entity: sensor.auto_evbox_evbox_pv_available_current
+            entity: sensor.ev_box_2_evbox_pv_available_current
             min: 0
             max: 16
             severity:
@@ -40,95 +40,150 @@ views:
         title: Bediening
         show_header_toggle: false
         entities:
-          - entity: select.auto_evbox_charge_mode
+          - entity: select.ev_box_2_charge_mode
             name: Modus
-          - entity: switch.auto_evbox_enable_pv_mode
+          - entity: switch.ev_box_2_enable_pv_mode
             name: PV mode actief
-          - entity: switch.auto_evbox_start_charging
+          - entity: switch.ev_box_2_start_charging
             name: Start laden
-          - entity: switch.auto_evbox_stop_charging
+          - entity: switch.ev_box_2_pause_charging
+            name: Pauzeer laden
+          - entity: switch.ev_box_2_stop_charging
             name: Stop laden
-          - entity: number.auto_evbox_manual_current
+          - entity: number.ev_box_2_manual_current
             name: Manuele laadstroom
-          - entity: number.auto_evbox_max_current
+          - entity: number.ev_box_2_max_current
             name: Maximale laadstroom
-          - entity: number.auto_evbox_evbox_group_breaker_current
+          - entity: number.ev_box_2_evbox_group_breaker_current
             name: EVBox groepzekering
-          - entity: number.auto_evbox_main_fuse_current
+          - entity: number.ev_box_2_main_fuse_current
             name: Hoofdzekering
-          - entity: sensor.auto_evbox_evbox_grid_phase_mapping
+          - entity: sensor.ev_box_2_evbox_grid_phase_mapping
             name: Fase mapping actief
-          - entity: select.auto_evbox_evbox_l1_grid_phase
+          - entity: sensor.ev_box_2_evbox_detected_charge_phases
+            name: Gedetecteerde laadfasen
+          - entity: sensor.ev_box_2_evbox_active_phase_mask
+            name: Actieve fasemasker
+          - entity: select.ev_box_2_evbox_l1_grid_phase
             name: EVBox L1 op Janitza fase
-          - entity: select.auto_evbox_evbox_l2_grid_phase
+          - entity: select.ev_box_2_evbox_l2_grid_phase
             name: EVBox L2 op Janitza fase
-          - entity: select.auto_evbox_evbox_l3_grid_phase
+          - entity: select.ev_box_2_evbox_l3_grid_phase
             name: EVBox L3 op Janitza fase
-          - entity: select.auto_evbox_failsafe_mode
+          - entity: select.ev_box_2_failsafe_mode
             name: Failsafe mode
-          - entity: number.auto_evbox_failsafe_current
+          - entity: number.ev_box_2_failsafe_current
             name: Failsafe stroom
+
+      - type: entities
+        title: Slim laden configuratie
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.ev_slim_laden_actief
+            name: Slim laden actief
+          - entity: input_select.ev_laadstrategie
+            name: Laadstrategie
+          - entity: input_datetime.ev_vertrektijd_werkdagen
+            name: Vertrektijd werkdagen
+          - entity: input_datetime.ev_laagtarief_start
+            name: Laagtarief start
+          - entity: input_datetime.ev_laagtarief_einde
+            name: Laagtarief einde
+          - entity: input_number.ev_soc_tussenstop
+            name: Eerst laden tot
+          - entity: input_number.ev_soc_doel_werkdag
+            name: Doel-SOC werkdag
+          - entity: input_number.ev_laadtempo_pct_per_uur
+            name: Laadtempo
+          - entity: input_number.ev_laatste_stuk_buffer_min
+            name: Buffer voor vertrek
+          - entity: input_number.ev_max_stroom_nacht
+            name: Max stroom nacht
+          - entity: input_number.ev_max_stroom_laatste_stuk
+            name: Max stroom laatste stuk
+          - entity: input_number.ev_max_stroom_load_balancing
+            name: Max stroom load balancing
+          - entity: input_number.ev_max_stroom_pv
+            name: Max stroom PV
+          - entity: input_number.ev_groepzekering_stroom
+            name: EVBox groepzekering
+          - entity: input_number.ev_hoofdzekering_stroom
+            name: Hoofdzekering
+          - entity: input_number.ev_min_pv_verwachting_kwh
+            name: Minimale PV vandaag
+          - entity: input_number.ev_min_pv_vermogen_w
+            name: Minimale PV vermogen
+          - entity: input_number.ev_min_pv_uur_kwh
+            name: Minimale PV per uur
+          - entity: binary_sensor.ev_goedkoop_laadvenster
+            name: Goedkoop laadvenster
+          - entity: binary_sensor.ev_pv_verwacht
+            name: PV verwacht
+          - entity: sensor.ev_minuten_tot_vertrek
+            name: Minuten tot vertrek
+          - entity: sensor.ev_benodigde_laadtijd_tot_doel
+            name: Benodigde laadtijd
 
       - type: entities
         title: Waarom deze stroom?
         show_header_toggle: false
         entities:
-          - entity: sensor.auto_evbox_evbox_state
+          - entity: sensor.ev_box_2_evbox_state
             name: EVBox state
-          - entity: sensor.auto_evbox_evbox_status
+          - entity: sensor.ev_box_2_evbox_status
             name: EVBox status
-          - entity: sensor.auto_evbox_evbox_pv_status
+          - entity: sensor.ev_box_2_evbox_pv_status
             name: PV status
-          - entity: sensor.auto_evbox_evbox_limit_reason
+          - entity: sensor.ev_box_2_evbox_limit_reason
             name: Begrenzingsreden
-          - entity: sensor.auto_evbox_evbox_requested_current
+          - entity: sensor.ev_box_2_evbox_requested_current
             name: Gevraagd voor beveiliging
-          - entity: sensor.auto_evbox_evbox_allowed_current
+          - entity: sensor.ev_box_2_evbox_allowed_current
             name: Toegestaan na zekeringen
-          - entity: sensor.auto_evbox_evbox_commanded_current
+          - entity: sensor.ev_box_2_evbox_commanded_current
             name: Naar EVBox gestuurd
-          - entity: sensor.auto_evbox_evbox_returned_current_limit
+          - entity: sensor.ev_box_2_evbox_returned_current_limit
             name: Door EVBox teruggemeld
-          - entity: sensor.auto_evbox_evbox_pv_start_timer
+          - entity: sensor.ev_box_2_evbox_pv_start_timer
             name: PV starttimer resterend
-          - entity: sensor.auto_evbox_evbox_pv_pause_timer
+          - entity: sensor.ev_box_2_evbox_pv_pause_timer
             name: PV pauzetimer resterend
 
       - type: history-graph
         title: Laadregeling
         hours_to_show: 4
         entities:
-          - sensor.auto_evbox_evbox_requested_current
-          - sensor.auto_evbox_evbox_allowed_current
-          - sensor.auto_evbox_evbox_commanded_current
-          - sensor.auto_evbox_evbox_returned_current_limit
-          - sensor.auto_evbox_evbox_current
+          - sensor.ev_box_2_evbox_requested_current
+          - sensor.ev_box_2_evbox_allowed_current
+          - sensor.ev_box_2_evbox_commanded_current
+          - sensor.ev_box_2_evbox_returned_current_limit
+          - sensor.ev_box_2_evbox_current
 
       - type: entities
         title: Aansluiting en ChargeBox
         show_header_toggle: false
         entities:
-          - entity: sensor.auto_evbox_evbox_communication
+          - entity: sensor.ev_box_2_evbox_communication
             name: Communicatie
-          - entity: sensor.auto_evbox_evbox_protocol_profile
+          - entity: sensor.ev_box_2_evbox_protocol_profile
             name: Protocolprofiel
-          - entity: sensor.auto_evbox_evbox_cb_serial
+          - entity: sensor.ev_box_2_evbox_cb_serial
             name: CB serial
-          - entity: sensor.auto_evbox_evbox_cb_status_detail
+          - entity: sensor.ev_box_2_evbox_cb_status_detail
             name: CB status detail
-          - entity: sensor.auto_evbox_evbox_current_request_state
+          - entity: sensor.ev_box_2_evbox_current_request_state
             name: CB stroomvraag
-          - entity: sensor.auto_evbox_evbox_cable_status
+          - entity: sensor.ev_box_2_evbox_cable_status
             name: Kabelstatus
-          - entity: sensor.auto_evbox_evbox_cable_max_current
+          - entity: sensor.ev_box_2_evbox_cable_max_current
             name: Kabel max stroom
-          - entity: sensor.auto_evbox_evbox_lock_status
+          - entity: sensor.ev_box_2_evbox_lock_status
             name: Lock status
-          - entity: sensor.auto_evbox_evbox_cb_lock_state
+          - entity: sensor.ev_box_2_evbox_cb_lock_state
             name: CB lock bit
-          - entity: sensor.auto_evbox_evbox_cb_is_charging
+          - entity: sensor.ev_box_2_evbox_cb_is_charging
             name: CB charging bit
-          - entity: sensor.auto_evbox_evbox_cb_led_colour
+          - entity: sensor.ev_box_2_evbox_cb_led_colour
             name: CB LED code
 
       - type: grid
@@ -138,41 +193,41 @@ views:
           - type: entities
             title: EVBox L1
             entities:
-              - sensor.auto_evbox_evbox_l1_voltage
-              - sensor.auto_evbox_evbox_l1_current
-              - sensor.auto_evbox_evbox_l1_power_factor
+              - sensor.ev_box_2_evbox_l1_voltage
+              - sensor.ev_box_2_evbox_l1_current
+              - sensor.ev_box_2_evbox_l1_power_factor
           - type: entities
             title: EVBox L2
             entities:
-              - sensor.auto_evbox_evbox_l2_voltage
-              - sensor.auto_evbox_evbox_l2_current
-              - sensor.auto_evbox_evbox_l2_power_factor
+              - sensor.ev_box_2_evbox_l2_voltage
+              - sensor.ev_box_2_evbox_l2_current
+              - sensor.ev_box_2_evbox_l2_power_factor
           - type: entities
             title: EVBox L3
             entities:
-              - sensor.auto_evbox_evbox_l3_voltage
-              - sensor.auto_evbox_evbox_l3_current
-              - sensor.auto_evbox_evbox_l3_power_factor
+              - sensor.ev_box_2_evbox_l3_voltage
+              - sensor.ev_box_2_evbox_l3_current
+              - sensor.ev_box_2_evbox_l3_power_factor
 
       - type: entities
         title: EVBox meter en sessie
         show_header_toggle: false
         entities:
-          - entity: sensor.auto_evbox_evbox_meter_status
+          - entity: sensor.ev_box_2_evbox_meter_status
             name: Meterstatus
-          - entity: sensor.auto_evbox_evbox_meter_model
+          - entity: sensor.ev_box_2_evbox_meter_model
             name: Metermodel
-          - entity: sensor.auto_evbox_evbox_meter_serial
+          - entity: sensor.ev_box_2_evbox_meter_serial
             name: Meterserial
-          - entity: sensor.auto_evbox_evbox_meter_value
+          - entity: sensor.ev_box_2_evbox_meter_value
             name: Meterstand
-          - entity: sensor.auto_evbox_evbox_raw_meter_wh
+          - entity: sensor.ev_box_2_evbox_raw_meter_wh
             name: Ruwe meterstand Wh
-          - entity: sensor.auto_evbox_evbox_session_energy
+          - entity: sensor.ev_box_2_evbox_session_energy
             name: Sessie energie
-          - entity: sensor.auto_evbox_evbox_power
+          - entity: sensor.ev_box_2_evbox_power
             name: EVBox vermogen
-          - entity: sensor.auto_evbox_evbox_temperature
+          - entity: sensor.ev_box_2_evbox_temperature
             name: Temperatuur
 
       - type: grid
@@ -181,7 +236,7 @@ views:
         cards:
           - type: gauge
             name: Janitza L1
-            entity: sensor.auto_evbox_janitza_l1_current
+            entity: sensor.ev_box_2_janitza_l1_current
             min: 0
             max: 25
             severity:
@@ -190,7 +245,7 @@ views:
               red: 25
           - type: gauge
             name: Janitza L2
-            entity: sensor.auto_evbox_janitza_l2_current
+            entity: sensor.ev_box_2_janitza_l2_current
             min: 0
             max: 25
             severity:
@@ -199,7 +254,7 @@ views:
               red: 25
           - type: gauge
             name: Janitza L3
-            entity: sensor.auto_evbox_janitza_l3_current
+            entity: sensor.ev_box_2_janitza_l3_current
             min: 0
             max: 25
             severity:
@@ -211,14 +266,14 @@ views:
         title: Janitza netmeting
         show_header_toggle: false
         entities:
-          - sensor.auto_evbox_janitza_communication
-          - sensor.auto_evbox_janitza_total_power
-          - sensor.auto_evbox_janitza_import_power
-          - sensor.auto_evbox_janitza_export_power
-          - sensor.auto_evbox_janitza_l1_power
-          - sensor.auto_evbox_janitza_l2_power
-          - sensor.auto_evbox_janitza_l3_power
-          - sensor.auto_evbox_janitza_l1_voltage
-          - sensor.auto_evbox_janitza_l2_voltage
-          - sensor.auto_evbox_janitza_l3_voltage
+          - sensor.ev_box_2_janitza_communication
+          - sensor.ev_box_2_janitza_total_power
+          - sensor.ev_box_2_janitza_import_power
+          - sensor.ev_box_2_janitza_export_power
+          - sensor.ev_box_2_janitza_l1_power
+          - sensor.ev_box_2_janitza_l2_power
+          - sensor.ev_box_2_janitza_l3_power
+          - sensor.ev_box_2_janitza_l1_voltage
+          - sensor.ev_box_2_janitza_l2_voltage
+          - sensor.ev_box_2_janitza_l3_voltage
 
