@@ -10,6 +10,7 @@ esphome:
 esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
+  flash_size: 16MB
   framework:
     type: arduino
 
@@ -43,13 +44,17 @@ wifi:
 
 captive_portal:
 
-# Waveshare ESP32-S3-Relay-6CH onboard RS485:
+# Waveshare ESP32-S3-RS485-CAN onboard isolated RS485:
 # GPIO17 -> RS485 TX
 # GPIO18 -> RS485 RX
+# GPIO21 -> RS485 RTS/EN
 uart:
   id: evbox_rs485_uart
   tx_pin: GPIO17
   rx_pin: GPIO18
+  flow_control_pin:
+    number: GPIO21
+    inverted: false
   baud_rate: 38400
   data_bits: 8
   parity: NONE
@@ -72,10 +77,6 @@ evbox_max:
   remote_start_card: "000000AS"
   heartbeat_interval: 5s
   watchdog_timeout: 30s
-  relay_evbox_known_pin: GPIO1
-  relay_janitza_ok_pin: GPIO2
-  relay_charging_active_pin: GPIO41
-  relay_failsafe_pin: GPIO42
 
   # EVBox status and protocol diagnostics
   status:
